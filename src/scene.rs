@@ -9,7 +9,7 @@ use crate::world::VoxelDensityGenerator;
 
 
 fn select_lod(distance_to_player: usize) -> LOD {
-    if distance_to_player < 200 {
+    if distance_to_player < 30 {
         0  // Full resolution
     } else if distance_to_player < 40 {
         1  // 1/2 resolution
