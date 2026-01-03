@@ -1,0 +1,10 @@
+# Minimal Trunk configuration for local dev
+[build]
+dist = "docs"
+# Set public URL if you plan to host under a subpath
+# public_url = "/"
+
+[serve]
+# Change the default port if needed
+port = 8080
+open = false

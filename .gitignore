@@ -1,0 +1,45 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+
+# WASM/Web
+/pkg/
+/dist/
+.wasm-pack/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+/docs/
+*.o
+*.a
+*.so
+
+# Trunk (web bundler)
+.trunk/
+trunk-out/
+
+# Node/npm
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment
+.env
+.env.local
+
+# OS
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Development
+*.bak
+*.tmp
