@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use wgpu::*;
 use wgpu::util::DeviceExt;
-use crate::model::Chunk;
-use crate::utils::{MeshBuffer, Vertex, create_outline_mesh};
+use crate::model::{Chunk, Camera};
+use crate::utils::{ChunkCoord, MeshBuffer, Vertex, create_outline_mesh};
 use glam::Vec3;
 
 // Shared graphics setup used by native and web
@@ -351,11 +351,23 @@ impl RenderState {
         device: &Device,
         queue: &Queue,
         surface: &Surface,
-        scene_chunks: &Vec<Option<Rc<(Chunk, (u8, MeshBuffer))>>>,
+        scene_chunks: &Vec<Option<Rc<(ChunkCoord, Chunk, (u8, MeshBuffer))>>>,
         depth_view: &TextureView,
         cam_bg: &BindGroup,
         outline_bg: &BindGroup,
+        chunk_size: f32,
     ) {
+        // Pre-compute frustum planes once for culling
+        let frustum_planes = Camera::frustum_planes(
+            self.player_pos,
+            self.camera_yaw,
+            self.camera_pitch,
+            self.camera_aspect,
+            self.camera_fov_y,
+            self.camera_z_near,
+            self.camera_z_far,
+        );
+
         let (egui_primitives, egui_full_output) = match (self.egui_primitives.take(), self.egui_full_output.take()) {
             (Some(prim), Some(output)) => (prim, output),
             _ => return, // No UI to render
@@ -433,13 +445,19 @@ impl RenderState {
             rp.set_bind_group(0, cam_bg, &[]);
 
 
-            // DRAW CHUNKS
+            // DRAW CHUNKS with frustum culling
             for entry in scene_chunks.iter() {
                 // Render mesh if this chunk has one
-                if let Some((_, (_, mesh_buffer))) = entry.as_deref() {
+                if let Some((chunk_coord, _, (_, mesh_buffer))) = entry.as_deref() {
                     if mesh_buffer.index_count == 0 {
                         continue; // Skip empty meshes
                     }
+                    
+                    // Frustum culling - skip chunks outside view
+                    if !Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
+                        continue;
+                    }
+                    
                     rp.set_vertex_buffer(0, mesh_buffer.vertex_buffer.slice(..));
                     rp.set_index_buffer(mesh_buffer.index_buffer.slice(..), IndexFormat::Uint32);
                     rp.draw_indexed(0..mesh_buffer.index_count, 0, 0..1);
@@ -495,5 +513,34 @@ impl RenderState {
 
         queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+    }
+
+    /// Fast frustum culling check for a chunk AABB
+    /// Uses pre-computed frustum planes to avoid recalculating per-chunk
+    #[inline]
+    fn is_chunk_visible(planes: &[[f32; 4]; 6], coord: &ChunkCoord, chunk_size: f32) -> bool {
+        let min_x = coord.0 as f32 * chunk_size;
+        let min_y = coord.1 as f32 * chunk_size;
+        let min_z = coord.2 as f32 * chunk_size;
+        let max_x = min_x + chunk_size;
+        let max_y = min_y + chunk_size;
+        let max_z = min_z + chunk_size;
+
+        // Test against each frustum plane
+        for plane in planes {
+            let [a, b, c, d] = *plane;
+            
+            // Find the corner most in the direction of the plane normal (p-vertex)
+            // If this corner is outside, the whole AABB is outside
+            let px = if a >= 0.0 { max_x } else { min_x };
+            let py = if b >= 0.0 { max_y } else { min_y };
+            let pz = if c >= 0.0 { max_z } else { min_z };
+            
+            // If p-vertex is outside this plane, chunk is culled
+            if a * px + b * py + c * pz + d < 0.0 {
+                return false;
+            }
+        }
+        true
     }
 }

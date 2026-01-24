@@ -47,8 +47,9 @@ fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<((isi
 
 type LOD = u8;
 
-/// Active entry: (Chunk, (LOD, MeshBuffer))
-type ActiveEntry = (Chunk, (LOD, MeshBuffer));
+/// Active entry: (ChunkCoord, Chunk, (LOD, MeshBuffer))
+/// ChunkCoord stored so we can do frustum culling during rendering
+type ActiveEntry = (ChunkCoord, Chunk, (LOD, MeshBuffer));
 
 
 pub struct Scene {
@@ -86,7 +87,7 @@ impl Scene {
             active: active,
             previous_player_chunk_coord: ChunkCoord(0, 0, 0),
 
-            empty_entry: Rc::new((Chunk::new_empty(), (0, Mesh::empty().upload(device)))),
+            empty_entry: Rc::new((ChunkCoord(0, 0, 0), Chunk::new_empty(), (0, Mesh::empty().upload(device)))),
             sphere_offsets: generate_qube_offset_in_spherical_order(active_size),
             density_generator: VoxelDensityGenerator::new(),
         }
@@ -124,7 +125,7 @@ impl Scene {
 
         if let Some(active_entry) = self.get_active(&chunk_coord) {
             let block_coord = world_coord.to_block_coord();
-            Some(active_entry.0.get_block(&block_coord))
+            Some(active_entry.1.get_block(&block_coord))
         } else {
             None
         }
@@ -144,7 +145,7 @@ impl Scene {
                 if new_chunk.set_block(&block_coord, block, overwrite) {
                     let mut new_mesh = new_chunk.get_mesh(0);
                     new_mesh.offset_vertices_by(&chunk_coord);
-                    self.active[active_idx] = Some(Rc::new((new_chunk, (0, new_mesh.upload(device)))));
+                    self.active[active_idx] = Some(Rc::new((chunk_coord, new_chunk, (0, new_mesh.upload(device)))));
                     return true;
                 }
                 return false;
@@ -152,7 +153,7 @@ impl Scene {
         }
 
         // Normal case: get mutable reference to existing non-shared chunk
-        if let Some((active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord) {
+        if let Some((_, active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord) {
 
             if active_chunk.set_block(&block_coord, block, overwrite) {
                 
@@ -207,7 +208,7 @@ impl Scene {
             }
 
 
-            if let Some((active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord){
+            if let Some((_, active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord){
                 // chunk is present -> check if LOD needs to be updated
                 if !active_chunk.is_empty() && *active_lod != required_lod {
                     // println!("Updating LOD for Chunk {:?} from {} to {}", chunk_coord, *active_lod, required_lod);
@@ -240,7 +241,7 @@ impl Scene {
                     let mut new_mesh = new_chunk.get_mesh(required_lod);
                     new_mesh.offset_vertices_by(&chunk_coord);
 
-                    Some(Rc::new((new_chunk, (required_lod, new_mesh.upload(device)))))
+                    Some(Rc::new((chunk_coord, new_chunk, (required_lod, new_mesh.upload(device)))))
                 };
             }
 
