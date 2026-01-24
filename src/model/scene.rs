@@ -175,21 +175,22 @@ impl Scene {
 
         let mut used_compute_budget = 0;
 
-        // Update sliding chunk window based on player position
-        self.slide_active_chunk_window(player.to_chunk_coord());
+        let player_chunk = player.to_chunk_coord();
 
-        // copy offsets to allow mutable borrow of self in the loop
-        let sphere_offsets = self.sphere_offsets.clone();
+        // Update sliding chunk window based on player position
+        self.slide_active_chunk_window(player_chunk);
         
         // iterate in order of distance from player
-        for ((offset_x, offset_y, offset_z), distance) in sphere_offsets {
+        // Use index-based iteration to avoid cloning the entire Vec each frame
+        for i in 0..self.sphere_offsets.len() {
+            let ((offset_x, offset_y, offset_z), distance) = self.sphere_offsets[i];
 
             let required_lod = select_lod(distance);
 
             let chunk_coord = ChunkCoord(
-                player.to_chunk_coord().0 + offset_x,
-                player.to_chunk_coord().1 + offset_y,
-                player.to_chunk_coord().2 + offset_z,
+                player_chunk.0 + offset_x,
+                player_chunk.1 + offset_y,
+                player_chunk.2 + offset_z,
             ); 
             let active_idx = self.active_idx(&chunk_coord);
 
