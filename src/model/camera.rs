@@ -49,6 +49,7 @@ impl Camera {
     
     // DDA raycast to find block intersection
     // Returns (block_pos, face_normal) or None if no hit within max_distance
+    // Uses smaller step size for more accurate face normal detection
     pub fn raycast<F>(&self, max_distance: f32, is_solid: F) -> Option<((i32, i32, i32), (i32, i32, i32))>
     where
         F: Fn(i32, i32, i32) -> bool,
@@ -56,7 +57,7 @@ impl Camera {
         let dir = self.forward();
         let mut pos = self.eye;
         
-        let step_size = 0.1;
+        let step_size = 0.05; // Smaller step for better accuracy
         let mut distance = 0.0;
         let mut last_air_block = (pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
         
@@ -69,14 +70,31 @@ impl Camera {
             let block_z = pos.z.floor() as i32;
             
             if is_solid(block_x, block_y, block_z) {
-                // Found a solid block, return it
-                // Compute face normal based on which coordinate changed
+                // Found a solid block
+                // Compute face normal by checking which axis was crossed most recently
                 let (prev_x, prev_y, prev_z) = last_air_block;
-                let face_normal = (
-                    if block_x != prev_x { (block_x - prev_x).signum() } else { 0 },
-                    if block_y != prev_y { (block_y - prev_y).signum() } else { 0 },
-                    if block_z != prev_z { (block_z - prev_z).signum() } else { 0 },
-                );
+                
+                // Determine which axis changed and use that as the normal
+                // If multiple axes changed (corner case), prioritize the one that changed most
+                let dx = (block_x - prev_x).abs();
+                let dy = (block_y - prev_y).abs();
+                let dz = (block_z - prev_z).abs();
+                
+                let face_normal = if dx > 0 && dx >= dy && dx >= dz {
+                    ((block_x - prev_x).signum(), 0, 0)
+                } else if dy > 0 && dy >= dx && dy >= dz {
+                    (0, (block_y - prev_y).signum(), 0)
+                } else if dz > 0 {
+                    (0, 0, (block_z - prev_z).signum())
+                } else {
+                    // Fallback: use simple coordinate change detection
+                    (
+                        if block_x != prev_x { (block_x - prev_x).signum() } else { 0 },
+                        if block_y != prev_y { (block_y - prev_y).signum() } else { 0 },
+                        if block_z != prev_z { (block_z - prev_z).signum() } else { 0 },
+                    )
+                };
+                
                 return Some(((block_x, block_y, block_z), face_normal));
             }
             

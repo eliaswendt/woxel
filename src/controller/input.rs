@@ -49,6 +49,11 @@ pub struct InputState {
     pub mouse_pos: (f32, f32),
     pub left_click: bool,
     pub right_click: bool,
+    // Click pulse timing - only true for 1 frame after click
+    pub left_click_pressed: bool,
+    pub right_click_pressed: bool,
+    pub last_left_click_time: f64,
+    pub last_right_click_time: f64,
 }
 
 impl InputState {
@@ -63,6 +68,10 @@ impl InputState {
             mouse_pos: (0.0, 0.0),
             left_click: false,
             right_click: false,
+            left_click_pressed: false,
+            right_click_pressed: false,
+            last_left_click_time: -1.0,
+            last_right_click_time: -1.0,
         }
     }
 
@@ -148,6 +157,33 @@ impl InputState {
             if current_idx > 0 { current_idx - 1 } else { blocks.len() - 1 }
         };
         self.selected_block = blocks[next_idx];
+    }
+
+    /// Update click pulse - should be called at the start of each frame
+    /// Cooldown in seconds
+    pub fn update_click_pulse(&mut self, current_time: f64, cooldown: f64) {
+        // Check if enough time has passed for next click to register
+        if self.left_click_pressed && (current_time - self.last_left_click_time) >= cooldown {
+            self.left_click = true;
+            self.last_left_click_time = current_time;
+        } else {
+            self.left_click = false;
+        }
+        
+        if self.right_click_pressed && (current_time - self.last_right_click_time) >= cooldown {
+            self.right_click = true;
+            self.last_right_click_time = current_time;
+        } else {
+            self.right_click = false;
+        }
+    }
+
+    /// Clear all click states (call on focus loss)
+    pub fn clear_clicks(&mut self) {
+        self.left_click = false;
+        self.right_click = false;
+        self.left_click_pressed = false;
+        self.right_click_pressed = false;
     }
 }
 
