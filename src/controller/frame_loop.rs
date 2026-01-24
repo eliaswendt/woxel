@@ -47,8 +47,7 @@ pub struct LightingUniform {
     pub sun_intensity: f32,
     pub ambient: f32,
     pub _pad1: f32,
-    pub _pad2: f32,
-    pub _pad3: f32,
+    pub eye_pos: [f32; 2],  // x, z of camera (y not needed for horizontal distance fog)
 }
 
 #[repr(C)]
@@ -158,7 +157,11 @@ impl FrameLoopContext {
         let sun_offset = glam::Vec3::new(50.0, 100.0, 50.0);
         let sun_pos = player_eye + sun_offset;
         let sun_dir = (sun_pos - player_eye).normalize();
-        self.lighting_buf_data.borrow_mut().sun_dir = [sun_dir.x, sun_dir.y, sun_dir.z];
+        {
+            let mut lighting = self.lighting_buf_data.borrow_mut();
+            lighting.sun_dir = [sun_dir.x, sun_dir.y, sun_dir.z];
+            lighting.eye_pos = [player_eye.x, player_eye.z];
+        }
         queue.write_buffer(&self.lighting_buf, 0, bytemuck::bytes_of(&*self.lighting_buf_data.borrow()));
 
         // Raycast to find block under crosshair

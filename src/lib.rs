@@ -76,8 +76,7 @@ async fn setup_app(
         sun_intensity: 0.8,         // Strong directional light
         ambient: 0.4,              // Lower ambient for more contrast
         _pad1: 0.0,
-        _pad2: 0.0,
-        _pad3: 0.0,
+        eye_pos: [0.0, 0.0],        // Updated each frame
     }));
     let lighting_buf = camera_resources.lighting_buffer;
     gpu.queue.as_ref().write_buffer(&lighting_buf, 0, bytemuck::bytes_of(&*lighting_buf_data.borrow()));

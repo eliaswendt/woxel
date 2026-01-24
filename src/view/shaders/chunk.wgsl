@@ -9,8 +9,8 @@ struct Lighting {
     sun_intensity: f32,
     ambient: f32,
     _pad1: f32,
-    _pad2: f32,
-    _pad3: f32,
+    eye_x: f32,
+    eye_z: f32,
 };
 
 @group(0) @binding(0)
@@ -69,19 +69,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sun_light = sun_factor * lighting.sun_intensity * sun_color;
     
     // === SKY LIGHT ===
-    // Soft blue fill light from above (hemisphere lighting)
+    // Warm blue fill light from above (hemisphere lighting)
     let sky_factor = (normal.y + 1.0) * 0.5; // 0 at bottom, 1 at top
-    let sky_color = vec3<f32>(0.6, 0.75, 1.0); // Soft sky blue
-    let sky_light = sky_factor * 0.25 * sky_color;
+    let sky_color = vec3<f32>(0.55, 0.7, 0.9); // Warm sky blue (less saturated, hint of warmth)
+    let sky_light = sky_factor * 0.3 * sky_color;
     
     // === GROUND BOUNCE ===
     // Subtle warm bounce light from below
     let ground_factor = (-normal.y + 1.0) * 0.5; // 0 at top, 1 at bottom
-    let ground_color = vec3<f32>(0.4, 0.35, 0.25); // Warm earth tones
-    let ground_light = ground_factor * 0.1 * ground_color;
+    let ground_color = vec3<f32>(0.45, 0.38, 0.28); // Warm earth tones
+    let ground_light = ground_factor * 0.12 * ground_color;
     
     // === COMBINE LIGHTING ===
-    let ambient_color = vec3<f32>(1.0, 1.0, 1.0);
+    let ambient_color = vec3<f32>(1.0, 0.98, 0.95); // Slightly warm ambient
     let ambient_light = lighting.ambient * ambient_color;
     
     // Total illumination
@@ -90,14 +90,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Apply lighting to base color
     var lit_color = base_color * total_light;
     
-    // === HEIGHT-BASED ATMOSPHERIC FOG ===
-    // Adds depth and atmosphere to distant/low terrain
-    let fog_color = vec3<f32>(0.7, 0.8, 0.95); // Light blue-gray fog
-    let fog_start = 0.0;
-    let fog_end = 128.0;
-    let height_fog = 1.0 - smoothstep(fog_start, fog_end, in.world_pos.y);
-    let fog_density = 0.15;
-    lit_color = mix(lit_color, fog_color * (ambient_light.x + 0.3), height_fog * fog_density);
+    // === DISTANCE + HEIGHT ATMOSPHERIC HAZE ===
+    // Distance fog creates depth perception, height fog adds atmosphere
+    let haze_color = vec3<f32>(0.75, 0.82, 0.92); // Warm blue-gray haze
+    
+    // Distance from camera (horizontal plane)
+    let dx = in.world_pos.x - lighting.eye_x;
+    let dz = in.world_pos.z - lighting.eye_z;
+    let dist = sqrt(dx * dx + dz * dz);
+    
+    // Distance fog - increases with distance from camera
+    let fog_near = 200.0;   // Start fading at this distance
+    let fog_far = 500.0;   // Fully fogged at this distance
+    let dist_fog = smoothstep(fog_near, fog_far, dist);
+    
+    // Height fog - lower areas have more haze
+    let height_fog = 1.0 - smoothstep(0.0, 140.0, in.world_pos.y);
+    
+    // Combine: distance fog is primary, height fog adds extra at low areas
+    let total_fog = dist_fog * 0.55 + height_fog * 0.12;
+    let fog_amount = clamp(total_fog, 0.0, 0.7); // Cap max fog
+    
+    lit_color = mix(lit_color, haze_color * (ambient_light.x + 0.35), fog_amount);
     
     // === SATURATION BOOST ===
     // Slightly boost color saturation for vibrancy
