@@ -267,16 +267,19 @@ impl Scene {
 
             // log_1(&format!("Sliding chunks along axis {} by {}", axis, step).into());
 
+            // track working position that gets updated each step (for multi-chunk teleports)
+            let mut working_base = self.previous_player_chunk_coord;
+
             // process each step of movement separately
             for _ in 0..movement_delta.abs() {
 
                 let half = self.active_size[axis] as isize / 2;
-                let prev_base = self.previous_player_chunk_coord;
 
-                // The plane to clear is at the edge in the direction of movement
-                // When moving +X (step=1): clear at prev_base.0 + half (the positive edge)
-                // When moving -X (step=-1): clear at prev_base.0 - half (the negative edge)
-                let plane_offset = half * step;
+                // The plane to clear is at the edge OPPOSITE to the direction of movement
+                // (these are the chunks being left behind as the player moves)
+                // When moving +X (step=1): clear at working_base.0 - half (the negative edge)
+                // When moving -X (step=-1): clear at working_base.0 + half (the positive edge)
+                let plane_offset = -half * step;
 
                 // iterate 2D plane perpendicular to the current axis
                 for i in 0..self.active_size[(axis + 1) % 3] as isize {
@@ -286,25 +289,25 @@ impl Scene {
                             0 => {
                                 // move in x-axis: clear yz-plane at the correct edge
                                 ChunkCoord(
-                                    prev_base.0 + plane_offset,
-                                    prev_base.1 + i - half,
-                                    prev_base.2 + j - half,
+                                    working_base.0 + plane_offset,
+                                    working_base.1 + i - half,
+                                    working_base.2 + j - half,
                                 )
                             }
                             1 => {
                                 // Y-axis: clear xz-plane
                                 ChunkCoord(
-                                    prev_base.0 + j - half,
-                                    prev_base.1 + plane_offset,
-                                    prev_base.2 + i - half,
+                                    working_base.0 + j - half,
+                                    working_base.1 + plane_offset,
+                                    working_base.2 + i - half,
                                 )
                             }
                             _ => {
                                 // Z-axis: clear xy-plane
                                 ChunkCoord(
-                                    prev_base.0 + i - half,
-                                    prev_base.1 + j - half,
-                                    prev_base.2 + plane_offset,
+                                    working_base.0 + i - half,
+                                    working_base.1 + j - half,
+                                    working_base.2 + plane_offset,
                                 )
                             }
                         };
@@ -313,6 +316,13 @@ impl Scene {
                         self.unset_active(&chunk_coord);
 
                     }
+                }
+
+                // Update working base for next iteration (handles multi-chunk teleports)
+                match axis {
+                    0 => working_base.0 += step,
+                    1 => working_base.1 += step,
+                    _ => working_base.2 += step,
                 }
             }
         }
