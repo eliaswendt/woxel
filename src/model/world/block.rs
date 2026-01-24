@@ -124,7 +124,7 @@ impl Block {
             Block::OakLeaves => [0.2, 0.6, 0.2, 1.0],
             Block::Wood => [0.5, 0.3, 0.1, 1.0],
             Block::Water => [0.0, 0.1, 0.4, 1.0],
-            Block::Cloud => [0.95, 0.95, 0.95, 0.7],
+            Block::Cloud => [0.95, 0.95, 0.95, 1.0],
             Block::Snow => [0.95, 0.97, 1.0, 1.0],
             Block::Ice => [0.6, 0.8, 0.95, 0.7],
             Block::CoalOre => [0.3, 0.3, 0.3, 1.0],

@@ -5,43 +5,41 @@
 // COMPLETE TERRAIN GENERATION PIPELINE
 // ============================================================================
 // 
-// The terrain is generated chunk-by-chunk using a 6-step pipeline:
+// The terrain is generated chunk-by-chunk using a comprehensive pipeline:
 //
 // STEP 1: Biome Determination (2D Noise)
 //   → Uses 2D perlin noise to determine biome type from temperature & humidity
-//   → Biomes: Tundra, Mountain, Forest, Desert, Beach, Plain, Ocean
+//   → Biomes: Tundra, Mountain, Forest, Desert, Beach, Plain, Ocean, Jungle, etc.
 //   → Called by: get_biome_type()
 //
-// STEP 2: Density Calculation (3D Noise with Gravity)
-//   → Uses 3D FBM noise to calculate terrain density at each (x,y,z) position
-//   → Y-GRADIENT creates natural gravity: no floating terrain!
-//   → Higher = more density, Lower = less density (air)
-//   → Called by: calculate_density()
+// STEP 2: Terrain Height (Multi-layered 2D Noise)
+//   → Continental noise: large-scale landmasses vs oceans
+//   → Erosion noise: mountains vs valleys
+//   → Ridge noise: dramatic mountain ridges
+//   → Detail noise: small-scale terrain variation
+//   → Creates diverse terrain: mountains, canyons, plateaus, valleys
 //
-// STEP 3: Cave Carving (3D Noise Ranges)
-//   → During density calculation, specific noise ranges force air (caves)
-//   → Creates natural cave systems integrated with terrain
-//   → Included in: calculate_density()
+// STEP 3: Cave System (3D Worm Caves + Cheese Caves)
+//   → Worm caves: long, winding tunnels using 3D noise
+//   → Cheese caves: large underground caverns
+//   → Cave entrances on hillsides
+//   → Depth-based cave frequency
 //
 // STEP 4: Water/Terrain Filling (Y-Level Checks)
-//   → If y <= 0 (below sea level): place water
-//   → If y > 0 but no solid density: place air
-//   → Creates natural water bodies at sea level
-//   → Implemented in: populate_chunk()
+//   → Below sea level: water
+//   → Underground lakes in large caves
+//   → Rivers following terrain depressions
 //
-// STEP 5: Tree Placement (2D Noise + Surface Detection)
-//   → Use 2D noise to determine tree centers
-//   → Only place trees on Grass/Moss surface blocks
-//   → Tree type determined by biome
-//   → Tree height randomized per position
-//   → Implemented in: populate_chunk() and plant_tree()
+// STEP 5: Forest System (Noise-based Clustering)
+//   → Forest density noise determines tree clustering
+//   → Natural clearings and dense forest areas
+//   → Sophisticated tree structures with branches
+//   → Tree variety based on biome and local conditions
 //
-// STEP 6: Clouds (Y == 255)
-//   → 2D noise determines cloud coverage at height 255
-//   → Only top of world
-//   → Implemented in: populate_chunk()
+// STEP 6: Clouds and Atmosphere
+//   → 2D noise determines cloud coverage at high altitudes
 //
-// Result: Coherent, natural terrain with forests, mountains, caves, and water!
+// Result: Rich, varied terrain with forests, mountains, caves, and natural features!
 //
 
 use super::block::Block;
@@ -135,6 +133,59 @@ pub fn fbm_3d(x: f32, y: f32, z: f32, base_freq: f32, gain: f32, octaves: u32) -
     if max_amplitude > 0.0 { result / max_amplitude } else { 0.0 }
 }
 
+/// Ridge noise - creates sharp ridges by taking absolute value and inverting
+/// Used for mountain ridges and dramatic terrain features
+fn ridge_noise(x: f32, z: f32, freq: f32, octaves: u32) -> f32 {
+    let mut result = 0.0;
+    let mut amplitude = 1.0;
+    let mut frequency = freq;
+    let mut max_amplitude = 0.0;
+    
+    for _ in 0..octaves {
+        // Take absolute value and invert for ridge effect
+        let n = 1.0 - noise2d(x * frequency, z * frequency).abs();
+        result += n * n * amplitude; // Square for sharper ridges
+        max_amplitude += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    if max_amplitude > 0.0 { result / max_amplitude } else { 0.0 }
+}
+
+/// Worm cave noise - creates long winding tunnels
+/// Uses two offset 3D noise samples to create tube-like structures
+fn worm_cave_noise(x: f32, y: f32, z: f32, freq: f32) -> f32 {
+    let n1 = fbm_3d(x, y, z, freq, 0.5, 3);
+    let n2 = fbm_3d(x + 100.0, y + 50.0, z - 100.0, freq, 0.5, 3);
+    
+    // Both noises must be near zero for a cave (intersection of two wavy surfaces)
+    let cave_value = (n1 * n1 + n2 * n2).sqrt();
+    cave_value
+}
+
+/// Cheese cave noise - creates large irregular caverns
+fn cheese_cave_noise(x: f32, y: f32, z: f32, freq: f32) -> f32 {
+    fbm_3d(x, y * 0.7, z, freq * 0.7, 0.6, 4)
+}
+
+/// Forest density noise - determines how dense trees should be in an area
+/// Returns value from 0.0 (no trees) to 1.0 (dense forest)
+fn forest_density_noise(x: f32, z: f32) -> f32 {
+    // Large scale forest patches
+    let large_scale = fbm(x, z, 0.008, 0.6, 4);
+    // Medium scale variation
+    let medium_scale = fbm(x + 500.0, z - 500.0, 0.025, 0.5, 3);
+    // Small scale for clearings
+    let small_scale = noise2d(x * 0.1, z * 0.1);
+    
+    // Combine scales - large determines forest vs plains, others add variation
+    let combined = large_scale * 0.6 + medium_scale * 0.3 + small_scale * 0.1;
+    
+    // Map to 0-1 range with bias towards forests in positive regions
+    ((combined + 0.5) * 1.2).clamp(0.0, 1.0)
+}
+
 // ============================================================================
 // BIOME TYPES AND TREE GENERATION
 // ============================================================================
@@ -226,28 +277,28 @@ impl Default for TerrainConfig {
     fn default() -> Self {
         Self {
             // Noise frequencies - lower = larger features
-            continentalness_freq: 0.008,
-            erosion_freq: 0.012,
-            temperature_freq: 0.005,
-            humidity_freq: 0.005,
+            continentalness_freq: 0.006,    // Larger landmasses
+            erosion_freq: 0.010,            // Smoother erosion
+            temperature_freq: 0.004,        // Larger biome regions
+            humidity_freq: 0.004,
             base_3d_freq: 0.028,
-            cave_freq: 0.04,
+            cave_freq: 0.035,               // Slightly larger caves
             
             // Height parameters
-            base_height: 45.0,
-            continental_height_amplitude: 80.0,
-            erosion_height_amplitude: 40.0,
+            base_height: 50.0,              // Higher base for more terrain
+            continental_height_amplitude: 100.0,  // More dramatic height variation
+            erosion_height_amplitude: 50.0,
             y_gradient_scale: 80.0,
             base_3d_noise_strength: 0.40,
             
-            // Cave parameters
-            cave_noise_min: -0.15,
-            cave_noise_max: 0.2,
+            // Cave parameters - improved for better cave systems
+            cave_noise_min: -0.12,
+            cave_noise_max: 0.18,
             
-            // Tree parameters
-            tree_noise_frequency: 0.4,
-            tree_spawn_threshold: -0.02,
-            tree_height_variation: 3,
+            // Tree parameters - adjusted for better forest clustering
+            tree_noise_frequency: 0.15,     // Lower for larger forest patches
+            tree_spawn_threshold: 0.1,      // Adjusted threshold
+            tree_height_variation: 4,       // More height variation
             
             // Lake parameters
             lake_frequency: 0.35,
@@ -303,9 +354,9 @@ impl VoxelDensityGenerator {
         let erosion = fbm(x * 1.5, z * 1.5, self.config.erosion_freq, 0.55, 3);
         // Range: -1 to 1
 
-        // 3. Temperature & Humidity for biome (used later in GetBiomeType)
-        let temperature = fbm(x, z, self.config.temperature_freq, 0.55, 3);
-        let humidity = fbm(x + 5000.0, z - 5000.0, self.config.humidity_freq, 0.55, 3);
+        // 3. Temperature & Humidity for biome (calculated here for consistency, used in get_biome_type)
+        let _temperature = fbm(x, z, self.config.temperature_freq, 0.55, 3);
+        let _humidity = fbm(x + 5000.0, z - 5000.0, self.config.humidity_freq, 0.55, 3);
 
         // 4. Calculate terrain height baseline - gravity-based terrain
         let continental_height = continentalness * self.config.continental_height_amplitude;
@@ -708,86 +759,777 @@ impl VoxelDensityGenerator {
         }
     }
 
-    /// Populate a chunk with simple 2D terrain (sea level at y=0)
+    /// Populate a chunk with terrain - ENHANCED VERSION
     /// 
-    /// Simplified terrain generation using only 2D noise:
-    /// - 2D noise for biome determination
-    /// - 2D noise for terrain height (average 0, maximum 255)
-    /// - Height-based block selection:
-    ///   * y < 0: Water
-    ///   * y >= 200: Snow (no grass)
-    ///   * y >= 100: Stone (no grass)
-    ///   * y < 100: Grass/biome-specific blocks
-    /// - Trees placed only below y=150
+    /// Features:
+    /// 1. Dramatic terrain with tall mountains and deep valleys
+    /// 2. Snow-capped peaks
+    /// 3. Ice regions (cold biomes)
+    /// 4. Flowers on meadows
+    /// 5. Cave entrances visible from surface
+    /// 6. Multiple tree types with varied shapes
     pub fn populate_chunk_simple(&self, chunk: &mut super::chunk::Chunk, chunk_coord: &crate::utils::ChunkCoord) {
         use crate::utils::BlockCoord;
         
-        for z in 0..CHUNK_SIZE {
-            for x in 0..CHUNK_SIZE {
-                let world_coord = chunk_coord.to_world_coord();
-                let wx = world_coord.0 as f32 + x as f32;
-                let wz = world_coord.2 as f32 + z as f32;
+        // Sea level at y=32 (gives room for underwater terrain and beaches)
+        const SEA_LEVEL: isize = 32;
+        const SNOW_LINE: isize = 100;  // Snow starts here
+        const PEAK_LINE: isize = 130;  // Rocky peaks above this
+        
+        for lz in 0..CHUNK_SIZE {
+            for lx in 0..CHUNK_SIZE {
+                // World coordinates
+                let wx = chunk_coord.0 * CHUNK_SIZE + lx;
+                let wz = chunk_coord.2 * CHUNK_SIZE + lz;
+                let fwx = wx as f32;
+                let fwz = wz as f32;
 
-                // STEP 1: Determine biome using 2D noise
-                let biome = self.get_biome_type(wx, wz, 30.0);
+                // ============================================
+                // STEP 1: Calculate terrain height (DRAMATIC!)
+                // ============================================
                 
-                // STEP 2: Calculate terrain height using 2D noise
-                // Use higher frequency (0.08) for more terrain variation and detail
-                // More octaves (6) for realistic mountain/valley transitions
-                let height_noise = fbm(wx * 0.08, wz * 0.08, 0.08, 0.55, 6);
-                let terrain_height = ((height_noise + 1.0) * 0.5 * 255.0) as isize;
+                // Base terrain
+                let base_height = 50.0;
+                
+                // Large continental features
+                let continental = Self::simple_noise(fwx * 0.003, fwz * 0.003);
+                let continental_height = continental * 50.0; // -50 to +50
+                
+                // Rolling hills
+                let large_noise = Self::simple_noise(fwx * 0.008, fwz * 0.008);
+                let large_hills = large_noise * 35.0;
+                
+                // Medium variation
+                let medium_noise = Self::simple_noise(fwx * 0.025, fwz * 0.025);
+                let medium_hills = medium_noise * 18.0;
+                
+                // Small detail
+                let small_noise = Self::simple_noise(fwx * 0.1, fwz * 0.1);
+                let small_detail = small_noise * 6.0;
+                
+                // DRAMATIC MOUNTAINS - multiple noise layers for tall peaks
+                let mountain_noise1 = Self::simple_noise(fwx * 0.006, fwz * 0.006);
+                let mountain_noise2 = Self::simple_noise(fwx * 0.012 + 500.0, fwz * 0.012 + 500.0);
+                let mountain_combined = (mountain_noise1 + mountain_noise2 * 0.5) / 1.5;
+                
+                let mountains = if mountain_combined > 0.2 {
+                    let m = (mountain_combined - 0.2) * 1.25; // 0 to 1
+                    let sharp = m * m * m; // Cubic for sharp peaks
+                    sharp * 150.0 // Up to 150 extra height for tall mountains!
+                } else {
+                    0.0
+                };
+                
+                // Ridge noise for extra drama
+                let ridge = Self::ridge_noise_simple(fwx * 0.015, fwz * 0.015);
+                let ridges = if mountain_combined > 0.1 {
+                    ridge * 40.0 * mountain_combined
+                } else {
+                    0.0
+                };
+                
+                // Valleys/canyons (negative mountains)
+                let valley_noise = Self::simple_noise(fwx * 0.01 + 1000.0, fwz * 0.01 + 1000.0);
+                let valleys = if valley_noise < -0.4 && continental > -0.3 {
+                    let v = (-valley_noise - 0.4) * 1.67;
+                    -v * v * 30.0 // Carve down into terrain
+                } else {
+                    0.0
+                };
+                
+                // Combine for final height
+                let height_f = base_height + continental_height + large_hills + medium_hills 
+                              + small_detail + mountains + ridges + valleys;
+                let terrain_height = (height_f as isize).clamp(5, 220);
+                
+                // ============================================
+                // BIOME DETERMINATION (temperature based on position + height)
+                // ============================================
+                let temp_noise = Self::simple_noise(fwx * 0.004 + 2000.0, fwz * 0.004 + 2000.0);
+                let base_temp = temp_noise; // -1 to 1
+                // Colder at higher altitudes and certain regions
+                let altitude_cooling = (terrain_height as f32 - 50.0) / 150.0;
+                let temperature = base_temp - altitude_cooling;
+                
+                let is_cold_biome = temperature < -0.3;
+                let is_frozen = temperature < -0.5;
+                
+                // ============================================
+                // TREE DETERMINATION
+                // ============================================
+                let tree_noise = Self::simple_noise(fwx * 0.3 + 100.0, fwz * 0.3 + 100.0);
+                let forest_density = Self::simple_noise(fwx * 0.02 + 300.0, fwz * 0.02 + 300.0);
+                
+                // Trees more likely in forests (high density areas)
+                let tree_threshold = if forest_density > 0.3 { 0.3 } // Forest: lots of trees
+                                     else if forest_density > 0.0 { 0.5 } // Scattered
+                                     else { 0.7 }; // Sparse
+                
+                let wants_tree = tree_noise > tree_threshold 
+                                && terrain_height > SEA_LEVEL + 3 
+                                && terrain_height < SNOW_LINE - 10;
+                
+                // Determine tree type based on biome/temperature
+                let tree_type_noise = Self::simple_noise(fwx * 0.5 + 500.0, fwz * 0.5 + 500.0);
+                let tree_type = if is_cold_biome || terrain_height > 80 {
+                    0 // Spruce in cold/mountain areas
+                } else if tree_type_noise > 0.3 {
+                    1 // Oak
+                } else if tree_type_noise > -0.2 {
+                    2 // Birch
+                } else {
+                    3 // Acacia
+                };
 
-                // Calculate tree data once per column
-                let tree_data = self.calculate_tree_data(wx, wz);
-
-                // Fill entire column based on terrain height
-                for y in 0..CHUNK_SIZE {
-                    let world_y = chunk_coord.1 as isize * CHUNK_SIZE as isize + y as isize;
+                // ============================================
+                // STEP 2: Fill the column
+                // ============================================
+                for ly in 0..CHUNK_SIZE {
+                    let world_y = chunk_coord.1 * CHUNK_SIZE + ly;
+                    let fwy = world_y as f32;
+                    
+                    // Cave check - can extend to surface for entrances!
+                    let cave_depth_limit = if Self::is_cave_entrance(fwx, fwz) {
+                        terrain_height // Allow caves to reach surface = entrance!
+                    } else {
+                        terrain_height - 4 // Normal: caves stay underground
+                    };
+                    
+                    let is_cave = world_y < cave_depth_limit 
+                                  && world_y > 5 
+                                  && Self::is_cave(fwx, fwy, fwz);
                     
                     let block = if world_y >= terrain_height {
-                        // STEP 3: Above terrain = air
-                        Block::Empty
-                    } else if world_y < 0 {
-                        // Below sea level = water
-                        Block::Water
-                    } else if world_y == terrain_height - 1 {
-                        // Surface layer - height-based determination
-                        if world_y >= 200 {
-                            // Above y=200: Snow
-                            Block::Snow
-                        } else if world_y >= 100 {
-                            // Above y=100: Bare stone (no grass)
-                            Block::Stone
+                        // Above terrain
+                        if world_y < SEA_LEVEL {
+                            if is_frozen {
+                                Block::Ice // Frozen ocean/lake
+                            } else {
+                                Block::Water
+                            }
                         } else {
-                            // Below y=100: Grass and biome-specific blocks
-                            self.get_surface_block_for_biome(wx, wz, world_y as f32, biome)
+                            Block::Empty
+                        }
+                    } else if is_cave {
+                        // Cave interior
+                        if world_y < SEA_LEVEL {
+                            Block::Water // Flooded cave
+                        } else {
+                            Block::Empty
                         }
                     } else {
-                        // Subsurface blocks
-                        if world_y >= 200 {
-                            Block::Snow
-                        } else if world_y >= 100 {
-                            Block::Stone
+                        // Solid terrain
+                        let depth = terrain_height - world_y;
+                        
+                        if depth == 1 {
+                            // Surface block
+                            if terrain_height < SEA_LEVEL - 5 {
+                                if is_frozen { Block::Ice } else { Block::Sand }
+                            } else if terrain_height < SEA_LEVEL + 4 {
+                                Block::Sand // Beach
+                            } else if terrain_height > PEAK_LINE {
+                                Block::Snow // Snow-capped peaks
+                            } else if terrain_height > SNOW_LINE {
+                                // Mix of snow and stone on upper mountains
+                                let snow_mix = Self::simple_noise(fwx * 0.2, fwz * 0.2);
+                                if snow_mix > -0.2 { Block::Snow } else { Block::Stone }
+                            } else if is_frozen {
+                                // Frozen ground
+                                let frozen_mix = Self::simple_noise(fwx * 0.15, fwz * 0.15);
+                                if frozen_mix > 0.3 { Block::Snow }
+                                else if frozen_mix > -0.3 { Block::Ice }
+                                else { Block::Moss }
+                            } else if is_cold_biome {
+                                // Cold but not frozen - mostly moss/snow patches
+                                let cold_mix = Self::simple_noise(fwx * 0.12, fwz * 0.12);
+                                if cold_mix > 0.5 { Block::Snow } else { Block::Moss }
+                            } else {
+                                Block::Grass
+                            }
+                        } else if depth <= 4 {
+                            // Subsurface
+                            if terrain_height < SEA_LEVEL + 4 {
+                                Block::Sand
+                            } else if terrain_height > SNOW_LINE || is_frozen {
+                                Block::Stone
+                            } else {
+                                Block::Dirt
+                            }
+                        } else if world_y < 8 {
+                            Block::Bedrock
+                        } else if world_y < 25 {
+                            let g = Self::simple_noise(fwx * 0.1, fwz * 0.1 + fwy * 0.1);
+                            if g > 0.5 { Block::Granite } else { Block::Stone }
                         } else {
-                            self.get_subsurface_block(wx, wz, world_y as f32, biome)
+                            // Stone with ores
+                            let ore = Self::simple_noise(fwx * 0.3 + fwy, fwz * 0.3);
+                            if ore > 0.88 && world_y < 60 {
+                                Block::CoalOre
+                            } else if ore < -0.88 && world_y < 45 {
+                                Block::IronOre
+                            } else if ore > 0.95 && world_y < 25 {
+                                Block::GoldOre
+                            } else if ore < -0.95 && world_y < 15 {
+                                Block::DiamondOre
+                            } else {
+                                Block::Stone
+                            }
                         }
                     };
 
-                    chunk.set_block(&BlockCoord(x as usize, y as usize, z as usize), block, false);
+                    chunk.set_block(&BlockCoord(lx as usize, ly as usize, lz as usize), block, false);
 
-                    // Place trees only below y=150 on grass/moss surface
-                    if world_y < 150 && world_y == terrain_height - 1 && tree_data.should_spawn && 
-                       matches!(block, Block::Grass | Block::Moss) {
-                        let tree = Tree {
-                            pos: (x as i32, z as i32),
-                            tree_type: tree_data.tree_type,
-                            trunk_height: tree_data.tree_height,
-                        };
-                        Self::plant_tree(&tree, chunk_coord, world_y as i32 + 1, chunk);
+                    // ============================================
+                    // 3D CLOUDS at height 200-210
+                    // ============================================
+                    const CLOUD_BASE: isize = 200;
+                    const CLOUD_TOP: isize = 210;
+                    if world_y >= CLOUD_BASE && world_y <= CLOUD_TOP {
+                        // 2D base noise determines where clouds exist
+                        let cloud_base_noise = Self::simple_noise(fwx * 0.015, fwz * 0.015);
+                        let cloud_detail = Self::simple_noise(fwx * 0.05 + 100.0, fwz * 0.05 + 100.0) * 0.25;
+                        
+                        if cloud_base_noise + cloud_detail > 0.0 {
+                            // Cloud density decreases toward edges (both horizontal and vertical)
+                            let cloud_strength = cloud_base_noise + cloud_detail;
+                            
+                            // Vertical shape: clouds are thicker in the middle
+                            let cloud_mid = (CLOUD_BASE + CLOUD_TOP) / 2;
+                            let y_dist = (world_y - cloud_mid).abs() as f32;
+                            let max_y_dist = ((CLOUD_TOP - CLOUD_BASE) / 2) as f32;
+                            let y_factor = 1.0 - (y_dist / max_y_dist);
+                            
+                            // 3D noise for puffy cloud shape
+                            let cloud_3d = Self::simple_noise(fwx * 0.08 + fwy * 0.1, fwz * 0.08 - fwy * 0.1);
+                            let cloud_3d_detail = Self::simple_noise(fwx * 0.15 + 50.0, fwz * 0.15 + fwy * 0.2) * 0.4;
+                            
+                            // Combine: need base noise + good y position + 3D shape
+                            let threshold = 0.3 - (cloud_strength * 0.4) - (y_factor * 0.3);
+                            if cloud_3d + cloud_3d_detail > threshold {
+                                chunk.set_block(&BlockCoord(lx as usize, ly as usize, lz as usize), Block::Cloud, false);
+                            }
+                        }
+                    }
+
+                    // ============================================
+                    // Place trees and decorations on surface
+                    // ============================================
+                    if world_y == terrain_height - 1 {
+                        // Trees on grass or moss
+                        if (block == Block::Grass || block == Block::Moss) && wants_tree {
+                            Self::place_fancy_tree(chunk, chunk_coord, lx, ly + 1, lz, world_y + 1, tree_type);
+                        }
+                        // Flowers on grass (not where trees are)
+                        else if block == Block::Grass && !wants_tree {
+                            let flower_noise = Self::simple_noise(fwx * 0.8 + 200.0, fwz * 0.8 + 200.0);
+                            if flower_noise > 0.6 {
+                                let flower_type_noise = Self::simple_noise(fwx * 1.5, fwz * 1.5);
+                                let flower = if flower_type_noise > 0.3 {
+                                    Block::RedFlower
+                                } else if flower_type_noise > -0.3 {
+                                    Block::YellowFlower
+                                } else {
+                                    Block::Grass_Tall
+                                };
+                                let fy = ly + 1;
+                                if fy >= 0 && fy < CHUNK_SIZE {
+                                    chunk.set_block(&BlockCoord(lx as usize, fy as usize, lz as usize), flower, false);
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+    
+    /// Very simple noise function - just uses sine waves
+    fn simple_noise(x: f32, z: f32) -> f32 {
+        let n1 = (x * 1.0).sin() * (z * 1.0).cos();
+        let n2 = (x * 0.5 + 10.0).sin() * (z * 0.7 + 20.0).sin();
+        let n3 = (x * 1.3 - 5.0).cos() * (z * 1.1 + 15.0).cos();
+        (n1 + n2 + n3) / 3.0
+    }
+    
+    /// Ridge noise for sharp mountain features
+    fn ridge_noise_simple(x: f32, z: f32) -> f32 {
+        let n = Self::simple_noise(x, z);
+        1.0 - n.abs() * 2.0 // Invert absolute value for ridges
+    }
+    
+    /// Simple cave check using 3D sine waves
+    fn is_cave(x: f32, y: f32, z: f32) -> bool {
+        // Main worm caves
+        let n1 = (x * 0.08).sin() * (y * 0.1).cos() * (z * 0.08).sin();
+        let n2 = (x * 0.12 + 50.0).cos() * (y * 0.09).sin() * (z * 0.11 + 30.0).cos();
+        let worm = (n1 + n2) / 2.0;
+        
+        // Larger cheese caves
+        let c1 = (x * 0.04).sin() * (y * 0.05).cos() * (z * 0.04).sin();
+        let c2 = (x * 0.06 + 100.0).cos() * (y * 0.07 + 50.0).sin() * (z * 0.05).cos();
+        let cheese = (c1 + c2) / 2.0;
+        
+        // Cave if either worm tunnel or cheese cavern
+        worm.abs() < 0.07 || (cheese > 0.3 && y < 50.0)
+    }
+    
+    /// Check if this XZ position should have a cave entrance
+    fn is_cave_entrance(x: f32, z: f32) -> bool {
+        let entrance_noise = Self::simple_noise(x * 0.05 + 777.0, z * 0.05 + 777.0);
+        entrance_noise > 0.7 // Rare cave entrances
+    }
+    
+    /// Place a fancy tree with varied shape based on type
+    /// type: 0=Spruce, 1=Oak, 2=Birch, 3=Acacia
+    fn place_fancy_tree(chunk: &mut super::chunk::Chunk, chunk_coord: &crate::utils::ChunkCoord, 
+                        lx: isize, ly: isize, lz: isize, world_y: isize, tree_type: i32) {
+        use crate::utils::BlockCoord;
+        
+        // Random variation based on position
+        let variation = ((world_y + lx * 7 + lz * 13) % 5) as i32;
+        
+        match tree_type {
+            0 => Self::place_spruce_tree(chunk, chunk_coord, lx, ly, lz, variation),
+            1 => Self::place_oak_tree(chunk, chunk_coord, lx, ly, lz, variation),
+            2 => Self::place_birch_tree(chunk, chunk_coord, lx, ly, lz, variation),
+            3 => Self::place_acacia_tree(chunk, chunk_coord, lx, ly, lz, variation),
+            _ => Self::place_oak_tree(chunk, chunk_coord, lx, ly, lz, variation),
+        }
+    }
+    
+    /// Spruce tree - tall, conical, with slight lean
+    fn place_spruce_tree(chunk: &mut super::chunk::Chunk, _chunk_coord: &crate::utils::ChunkCoord,
+                         lx: isize, ly: isize, lz: isize, variation: i32) {
+        use crate::utils::BlockCoord;
+        
+        // Trees: 10-14 blocks tall (limited by chunk height)
+        let max_height = (CHUNK_SIZE - ly - 2).max(0) as i32; // Leave room for top
+        let trunk_height = (10 + variation).min(max_height).max(5);
+        
+        // Slight lean for natural look
+        let lean_dir = variation % 4;
+        let (lean_x, lean_z): (isize, isize) = match lean_dir {
+            0 => (1, 0),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        let has_lean = variation > 1;
+        
+        let mut cx = lx;
+        let mut cz = lz;
+        
+        // Trunk with possible lean
+        for t in 0..trunk_height {
+            let ty = ly + t as isize;
+            if ty >= 0 && ty < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(cx as usize, ty as usize, cz as usize), Block::SpruceWood, true);
+            }
+            // Lean every 5 blocks
+            if has_lean && t > 3 && t % 5 == 0 && t < trunk_height - 3 {
+                let new_cx = cx + lean_x;
+                let new_cz = cz + lean_z;
+                if new_cx >= 0 && new_cx < CHUNK_SIZE && new_cz >= 0 && new_cz < CHUNK_SIZE {
+                    cx = new_cx;
+                    cz = new_cz;
+                }
+            }
+        }
+        
+        // Conical leaves - wider for bigger trees
+        let leaf_start = 3;
+        for layer in 0..(trunk_height - leaf_start) {
+            let ty = ly + leaf_start as isize + layer as isize;
+            if ty < 0 || ty >= CHUNK_SIZE { continue; }
+            
+            let layer_from_top = trunk_height - leaf_start - layer - 1;
+            let radius = (layer_from_top / 3).min(4).max(0);
+            
+            for dx in -(radius as isize)..=(radius as isize) {
+                for dz in -(radius as isize)..=(radius as isize) {
+                    let dist = (dx.abs() + dz.abs()) as i32;
+                    if dist <= radius + 1 {
+                        let tx = cx + dx;
+                        let tz = cz + dz;
+                        if tx >= 0 && tx < CHUNK_SIZE && tz >= 0 && tz < CHUNK_SIZE {
+                            if !(dx == 0 && dz == 0) {
+                                chunk.set_block(&BlockCoord(tx as usize, ty as usize, tz as usize), Block::SpruceLeaves, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Pointed top
+        let top_y = ly + trunk_height as isize;
+        if top_y >= 0 && top_y < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+            chunk.set_block(&BlockCoord(cx as usize, top_y as usize, cz as usize), Block::SpruceLeaves, false);
+        }
+        let top_y2 = top_y + 1;
+        if top_y2 >= 0 && top_y2 < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+            chunk.set_block(&BlockCoord(cx as usize, top_y2 as usize, cz as usize), Block::SpruceLeaves, false);
+        }
+    }
+    
+    /// Oak tree - large, curved/twisted trunk, big round canopy
+    fn place_oak_tree(chunk: &mut super::chunk::Chunk, _chunk_coord: &crate::utils::ChunkCoord,
+                      lx: isize, ly: isize, lz: isize, variation: i32) {
+        use crate::utils::BlockCoord;
+        
+        // Trees: 7-11 blocks tall (limited by chunk height)
+        let max_height = (CHUNK_SIZE - ly - 3).max(0) as i32; // Leave room for canopy
+        let trunk_height = (7 + (variation % 3) * 2).min(max_height).max(5);
+        
+        // Trunk with multiple curves for natural twisted look
+        let mut cx = lx;
+        let mut cz = lz;
+        let curve_dir1 = variation % 4;
+        let curve_dir2 = (variation + 2) % 4;
+        
+        for t in 0..trunk_height {
+            let ty = ly + t as isize;
+            if ty >= 0 && ty < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(cx as usize, ty as usize, cz as usize), Block::Wood, true);
+            }
+            
+            // First curve at 1/3 height
+            if t == trunk_height / 3 {
+                match curve_dir1 {
+                    0 if cx + 1 < CHUNK_SIZE => cx += 1,
+                    1 if cx > 0 => cx -= 1,
+                    2 if cz + 1 < CHUNK_SIZE => cz += 1,
+                    3 if cz > 0 => cz -= 1,
+                    _ => {}
+                }
+            }
+            // Second curve at 2/3 height (different direction)
+            if t == trunk_height * 2 / 3 {
+                match curve_dir2 {
+                    0 if cx + 1 < CHUNK_SIZE => cx += 1,
+                    1 if cx > 0 => cx -= 1,
+                    2 if cz + 1 < CHUNK_SIZE => cz += 1,
+                    3 if cz > 0 => cz -= 1,
+                    _ => {}
+                }
+            }
+        }
+        
+        // Multiple branches at different heights
+        let branch_heights = [trunk_height / 2, trunk_height * 2 / 3, trunk_height - 2];
+        for (i, &bh) in branch_heights.iter().enumerate() {
+            let branch_y = ly + bh as isize;
+            if branch_y >= 0 && branch_y < CHUNK_SIZE {
+                let dir = (variation as usize + i) % 4;
+                let (bx, bz): (isize, isize) = match dir {
+                    0 => (1, 0),
+                    1 => (-1, 0),
+                    2 => (0, 1),
+                    _ => (0, -1),
+                };
+                // Branch extends 1-2 blocks
+                let tx = cx + bx;
+                let tz = cz + bz;
+                if tx >= 0 && tx < CHUNK_SIZE && tz >= 0 && tz < CHUNK_SIZE {
+                    chunk.set_block(&BlockCoord(tx as usize, branch_y as usize, tz as usize), Block::Wood, true);
+                    // Extended branch
+                    let tx2 = tx + bx;
+                    let tz2 = tz + bz;
+                    let branch_y2 = branch_y + 1;
+                    if tx2 >= 0 && tx2 < CHUNK_SIZE && tz2 >= 0 && tz2 < CHUNK_SIZE && branch_y2 >= 0 && branch_y2 < CHUNK_SIZE && i > 0 {
+                        chunk.set_block(&BlockCoord(tx2 as usize, branch_y2 as usize, tz2 as usize), Block::Wood, true);
+                    }
+                }
+            }
+        }
+        
+        // Large round canopy
+        let canopy_base = ly + (trunk_height - 4) as isize;
+        for dy in 0isize..6 {
+            let ty = canopy_base + dy;
+            if ty < 0 || ty >= CHUNK_SIZE { continue; }
+            
+            // Bigger canopy: radius 3-4
+            let radius = if dy == 0 || dy == 5 { 3 } else { 4 };
+            for dx in -(radius as isize)..=(radius as isize) {
+                for dz in -(radius as isize)..=(radius as isize) {
+                    let dist_sq = dx * dx + dz * dz;
+                    if dist_sq <= (radius * radius) as isize + 2 {
+                        let tx = cx + dx;
+                        let tz = cz + dz;
+                        if tx >= 0 && tx < CHUNK_SIZE && tz >= 0 && tz < CHUNK_SIZE {
+                            let skip = dist_sq > ((radius - 1) * (radius - 1)) as isize 
+                                      && ((tx + tz + ty) % 5) == 0;
+                            if !skip && !(dx == 0 && dz == 0 && dy < 3) {
+                                chunk.set_block(&BlockCoord(tx as usize, ty as usize, tz as usize), Block::OakLeaves, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Birch tree - tall, slender, elegant with gentle sway
+    fn place_birch_tree(chunk: &mut super::chunk::Chunk, _chunk_coord: &crate::utils::ChunkCoord,
+                        lx: isize, ly: isize, lz: isize, variation: i32) {
+        use crate::utils::BlockCoord;
+        
+        // Trees: 8-12 blocks tall (limited by chunk height)
+        let max_height = (CHUNK_SIZE - ly - 3).max(0) as i32; // Leave room for canopy
+        let trunk_height = (8 + (variation % 3) * 2).min(max_height).max(5);
+        
+        // Gentle sway - birch can bend slightly
+        let sway_dir = variation % 4;
+        let (sway_x, sway_z): (isize, isize) = match sway_dir {
+            0 => (1, 0),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        
+        let mut cx = lx;
+        let mut cz = lz;
+        
+        // Slender trunk with gentle curve
+        for t in 0..trunk_height {
+            let ty = ly + t as isize;
+            if ty >= 0 && ty < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(cx as usize, ty as usize, cz as usize), Block::BirchWood, true);
+            }
+            // Gentle sway in upper half
+            if t == trunk_height * 2 / 3 && variation > 2 {
+                let new_cx = cx + sway_x;
+                let new_cz = cz + sway_z;
+                if new_cx >= 0 && new_cx < CHUNK_SIZE && new_cz >= 0 && new_cz < CHUNK_SIZE {
+                    cx = new_cx;
+                    cz = new_cz;
+                }
+            }
+        }
+        
+        // Taller, airier canopy
+        let canopy_base = ly + (trunk_height - 5) as isize;
+        for dy in 0isize..6 {
+            let ty = canopy_base + dy;
+            if ty < 0 || ty >= CHUNK_SIZE { continue; }
+            
+            let radius = if dy == 0 || dy == 5 { 2 } else { 3 };
+            for dx in -(radius as isize)..=(radius as isize) {
+                for dz in -(radius as isize)..=(radius as isize) {
+                    let dist_sq = dx * dx + dz * dz;
+                    if dist_sq <= (radius * radius) as isize + 1 {
+                        let tx = cx + dx;
+                        let tz = cz + dz;
+                        if tx >= 0 && tx < CHUNK_SIZE && tz >= 0 && tz < CHUNK_SIZE {
+                            // Very sparse for airy look
+                            let skip = ((tx + tz + ty) % 3) == 0;
+                            if !skip && !(dx == 0 && dz == 0 && dy < 4) {
+                                chunk.set_block(&BlockCoord(tx as usize, ty as usize, tz as usize), Block::BirchLeaves, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Acacia tree - dramatically angled trunk, wide flat canopy
+    fn place_acacia_tree(chunk: &mut super::chunk::Chunk, _chunk_coord: &crate::utils::ChunkCoord,
+                         lx: isize, ly: isize, lz: isize, variation: i32) {
+        use crate::utils::BlockCoord;
+        
+        // Trees: 7-10 blocks tall (limited by chunk height)
+        let max_height = (CHUNK_SIZE - ly - 3).max(0) as i32; // Leave room for canopy
+        let trunk_height = (7 + (variation % 2) * 2).min(max_height).max(5);
+        
+        // Angled trunk
+        let mut cx = lx;
+        let mut cz = lz;
+        let lean_dir = variation % 4;
+        let (lean_x, lean_z): (isize, isize) = match lean_dir {
+            0 => (1, 0),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        
+        for t in 0..trunk_height {
+            let ty = ly + t as isize;
+            if ty >= 0 && ty < CHUNK_SIZE && cx >= 0 && cx < CHUNK_SIZE && cz >= 0 && cz < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(cx as usize, ty as usize, cz as usize), Block::AcaciaWood, true);
+            }
+            
+            // Lean every 2 blocks
+            if t > 0 && t % 2 == 0 && t < trunk_height - 1 {
+                let new_cx = cx + lean_x;
+                let new_cz = cz + lean_z;
+                if new_cx >= 0 && new_cx < CHUNK_SIZE && new_cz >= 0 && new_cz < CHUNK_SIZE {
+                    cx = new_cx;
+                    cz = new_cz;
+                }
+            }
+        }
+        
+        // Forked branches at top - more dramatic forks for bigger tree
+        let fork_y = ly + trunk_height as isize - 1;
+        if fork_y >= 0 && fork_y < CHUNK_SIZE {
+            // Main branch continues further
+            let bx1 = cx + lean_x;
+            let bz1 = cz + lean_z;
+            if bx1 >= 0 && bx1 < CHUNK_SIZE && bz1 >= 0 && bz1 < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(bx1 as usize, fork_y as usize, bz1 as usize), Block::AcaciaWood, true);
+                // Extend further
+                let bx1e = bx1 + lean_x;
+                let bz1e = bz1 + lean_z;
+                if bx1e >= 0 && bx1e < CHUNK_SIZE && bz1e >= 0 && bz1e < CHUNK_SIZE {
+                    let fy_up = fork_y + 1;
+                    if fy_up >= 0 && fy_up < CHUNK_SIZE {
+                        chunk.set_block(&BlockCoord(bx1e as usize, fy_up as usize, bz1e as usize), Block::AcaciaWood, true);
+                    }
+                }
+            }
+            // Perpendicular branch - also extends
+            let bx2 = cx + lean_z;
+            let bz2 = cz - lean_x;
+            if bx2 >= 0 && bx2 < CHUNK_SIZE && bz2 >= 0 && bz2 < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(bx2 as usize, fork_y as usize, bz2 as usize), Block::AcaciaWood, true);
+                let bx2e = bx2 + lean_z;
+                let bz2e = bz2 - lean_x;
+                if bx2e >= 0 && bx2e < CHUNK_SIZE && bz2e >= 0 && bz2e < CHUNK_SIZE {
+                    chunk.set_block(&BlockCoord(bx2e as usize, fork_y as usize, bz2e as usize), Block::AcaciaWood, true);
+                }
+            }
+            // Third branch - opposite
+            let bx3 = cx - lean_x;
+            let bz3 = cz - lean_z;
+            if bx3 >= 0 && bx3 < CHUNK_SIZE && bz3 >= 0 && bz3 < CHUNK_SIZE {
+                chunk.set_block(&BlockCoord(bx3 as usize, fork_y as usize, bz3 as usize), Block::AcaciaWood, true);
+            }
+        }
+        
+        // Flat, wide canopy (bigger for taller tree)
+        let canopy_y = ly + trunk_height as isize;
+        for dy in 0isize..3 {
+            let ty = canopy_y + dy;
+            if ty < 0 || ty >= CHUNK_SIZE { continue; }
+            
+            let radius = if dy == 0 { 5 } else if dy == 1 { 4 } else { 3 };
+            for dx in -(radius as isize)..=(radius as isize) {
+                for dz in -(radius as isize)..=(radius as isize) {
+                    let dist_sq = dx * dx + dz * dz;
+                    if dist_sq <= (radius * radius) as isize + 2 {
+                        let tx = cx + dx;
+                        let tz = cz + dz;
+                        if tx >= 0 && tx < CHUNK_SIZE && tz >= 0 && tz < CHUNK_SIZE {
+                            // Add some gaps for natural look
+                            let skip = dist_sq > ((radius - 1) * (radius - 1)) as isize && ((tx + tz) % 4) == 0;
+                            if !skip {
+                                chunk.set_block(&BlockCoord(tx as usize, ty as usize, tz as usize), Block::AcaciaLeaves, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a position should be a cave
+    /// Uses both worm caves (tunnels) and cheese caves (caverns)
+    fn check_cave(&self, x: f32, y: f32, z: f32, surface_height: f32) -> bool {
+        // No caves too close to surface
+        if y > surface_height - 6.0 {
+            return false;
+        }
+        
+        // Worm caves - long winding tunnels using 3D noise
+        let worm = worm_cave_noise(x, y, z, 0.02);
+        // Lower threshold = more caves
+        if worm < 0.12 {
+            return true;
+        }
+        
+        // Cheese caves - large irregular caverns
+        let cheese = cheese_cave_noise(x, y, z, 0.015);
+        // Cheese caves form where noise is in a specific range
+        if cheese > 0.55 && cheese < 0.75 && y < 50.0 {
+            return true;
+        }
+        
+        // Extra spaghetti caves for variety
+        let spaghetti1 = fbm_3d(x, y, z, 0.03, 0.5, 3);
+        let spaghetti2 = fbm_3d(x + 1000.0, y, z + 1000.0, 0.03, 0.5, 3);
+        if spaghetti1.abs() < 0.04 && spaghetti2.abs() < 0.04 && y < 60.0 {
+            return true;
+        }
+        
+        false
+    }
+
+    /// Calculate tree placement with forest clustering
+    fn calculate_tree_data_clustered(&self, wx: f32, wz: f32, forest_density: f32) -> TreeData {
+        // Determine biome at this location
+        let biome = self.get_biome_type(wx, wz, 30.0);
+        
+        // Tree placement noise - determines exact tree positions
+        let tree_pos_noise = noise2d(wx * 0.5 + 200.0, wz * 0.5 - 200.0);
+        
+        // Additional jitter for natural distribution
+        let jitter = noise2d(wx * 1.7, wz * 1.7) * 0.15;
+        
+        // Combined noise value
+        let tree_noise = tree_pos_noise + jitter;
+        
+        // Base threshold - lower = more trees
+        // Forest density shifts the threshold down (more trees in dense forest areas)
+        let base_threshold = match biome {
+            BiomeType::Forest => -0.1,   // Lots of trees
+            BiomeType::Jungle => -0.2,   // Even more trees
+            BiomeType::Tundra => 0.3,    // Some trees
+            BiomeType::Plain => 0.4,     // Scattered trees
+            BiomeType::Mountain => 0.5,  // Few trees
+            BiomeType::Desert => 0.9,    // Almost no trees
+            _ => 0.3,
+        };
+        
+        // Forest density can lower threshold by up to 0.4
+        let threshold = base_threshold - (forest_density * 0.4);
+        let should_spawn = tree_noise > threshold;
+        
+        // Determine tree type based on biome
+        let tree_rng = (noise2d(wx * 0.3 + 300.0, wz * 0.3 - 300.0) + 1.0) * 0.5;
+        
+        let tree_type = match biome {
+            BiomeType::Tundra => TreeType::Spruce,
+            BiomeType::Forest => {
+                if tree_rng > 0.7 { TreeType::Birch }
+                else if tree_rng > 0.3 { TreeType::Oak }
+                else { TreeType::Spruce }
+            }
+            BiomeType::Mountain => {
+                if tree_rng > 0.5 { TreeType::Spruce } else { TreeType::Oak }
+            }
+            BiomeType::Jungle => {
+                if tree_rng > 0.5 { TreeType::DarkOak } else { TreeType::Acacia }
+            }
+            BiomeType::Desert => TreeType::Acacia,
+            BiomeType::Plain => {
+                if tree_rng > 0.7 { TreeType::Birch } else { TreeType::Oak }
+            }
+            _ => TreeType::Oak,
+        };
+        
+        // Tree height varies by type and density
+        let height_bonus = (forest_density * 2.0) as i32;
+        let height_var = ((tree_rng * 6.0) as i32) - 2;
+        let tree_height = match tree_type {
+            TreeType::Spruce => 7 + height_bonus + height_var,
+            TreeType::Birch => 6 + height_bonus + height_var,
+            TreeType::Oak => 5 + height_bonus + height_var,
+            TreeType::Acacia => 5 + height_bonus + height_var,
+            TreeType::DarkOak => 9 + height_bonus + height_var,
+        }.max(4).min(14);
+        
+        TreeData { tree_type, tree_height, should_spawn }
     }
 
     /// Plant a tree of given type at specified location
@@ -803,209 +1545,343 @@ impl VoxelDensityGenerator {
         }
     }
 
-    /// Plant an Oak tree: compact tree with 1-block trunk and 2-layer foliage
+    /// Helper to safely place a block within chunk bounds
+    fn safe_set_block(chunk: &mut super::chunk::Chunk, chunk_coord: &crate::utils::ChunkCoord, 
+                      wx: i32, wy: i32, wz: i32, block: Block) {
+        use crate::utils::BlockCoord;
+        const CHUNK_SIZE_I32: i32 = CHUNK_SIZE as i32;
+        
+        // Convert world coords to chunk-local coords
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE_I32;
+        let chunk_world_y = chunk_coord.1 as i32 * CHUNK_SIZE_I32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE_I32;
+        
+        let lx = wx - chunk_world_x;
+        let ly = wy - chunk_world_y;
+        let lz = wz - chunk_world_z;
+        
+        if lx >= 0 && lx < CHUNK_SIZE_I32 && 
+           ly >= 0 && ly < CHUNK_SIZE_I32 && 
+           lz >= 0 && lz < CHUNK_SIZE_I32 {
+            chunk.set_block(&BlockCoord(lx as usize, ly as usize, lz as usize), block, false);
+        }
+    }
+
+    /// Plant an Oak tree: Natural oak with thick trunk, branches, and layered canopy
     fn plant_oak(tree: &Tree, chunk_coord: &crate::utils::ChunkCoord, x: i32, z: i32, world_y: i32, chunk: &mut super::chunk::Chunk) {
-        use crate::utils::BlockCoord;
-        const CHUNK_SIZE: i32 = 16;
-        const OAK_LEAF_RADIUS: i32 = 1;
-        
         let trunk_h = tree.trunk_height;
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE as i32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE as i32;
+        let wx = chunk_world_x + x;
+        let wz = chunk_world_z + z;
         
-        // Place trunk vertically
+        // Main trunk
         for ty in 0..trunk_h {
             let wy = world_y + ty;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local >= 0 && cy_local < CHUNK_SIZE {
-                chunk.set_block(&BlockCoord(x as usize, cy_local as usize, z as usize), Block::Wood, false);
+            Self::safe_set_block(chunk, chunk_coord, wx, wy, wz, Block::Wood);
+        }
+        
+        // Add branches at ~60% height - two branches going opposite directions
+        let branch_height = world_y + (trunk_h * 3 / 5);
+        let branch_dir = ((wx + wz) % 4) as i32; // Pseudo-random direction based on position
+        
+        // Branch 1
+        let (bx1, bz1) = match branch_dir {
+            0 => (1, 0),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        Self::safe_set_block(chunk, chunk_coord, wx + bx1, branch_height, wz + bz1, Block::Wood);
+        Self::safe_set_block(chunk, chunk_coord, wx + bx1 * 2, branch_height + 1, wz + bz1 * 2, Block::Wood);
+        
+        // Branch 2 (opposite direction)
+        Self::safe_set_block(chunk, chunk_coord, wx - bx1, branch_height + 1, wz - bz1, Block::Wood);
+        
+        // Layered canopy - multiple layers with varying radii for natural look
+        let canopy_base = world_y + trunk_h - 3;
+        let canopy_layers = [
+            (0, 3),  // Bottom layer: y offset, radius
+            (1, 3),  // 
+            (2, 2),  // Middle layers
+            (3, 2),  //
+            (4, 1),  // Top layer
+        ];
+        
+        for (y_offset, radius) in canopy_layers.iter() {
+            let wy = canopy_base + *y_offset;
+            for lx in -(*radius as i32)..=(*radius as i32) {
+                for lz in -(*radius as i32)..=(*radius as i32) {
+                    let dist_sq = lx * lx + lz * lz;
+                    let max_dist = radius * radius + 1;
+                    
+                    // Create rounded canopy with some gaps for natural look
+                    if dist_sq <= max_dist as i32 {
+                        // Add some irregularity - skip some outer leaves
+                        let skip = ((wx + lx + wz + lz + wy) % 5) == 0 && dist_sq > (max_dist / 2) as i32;
+                        if !skip {
+                            Self::safe_set_block(chunk, chunk_coord, wx + lx, wy, wz + lz, Block::OakLeaves);
+                        }
+                    }
+                }
             }
         }
         
-        // Place foliage: 2 layers with compact 3x3 shape
-        let leaves_base = world_y + trunk_h - 2;
-        for ly in 0..2 {
-            let wy = leaves_base + ly;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local < 0 || cy_local >= CHUNK_SIZE as i32 { continue; }
-            
-            for lx in -OAK_LEAF_RADIUS..=OAK_LEAF_RADIUS {
-                for lz in -OAK_LEAF_RADIUS..=OAK_LEAF_RADIUS {
-                    let nx = x + lx;
-                    let nz = z + lz;
-                    if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                    
-                    // Place leaves in 3x3 area
-                    chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::OakLeaves, false);
+        // Add some hanging leaves below branches
+        for bx in -1..=1 {
+            for bz in -1..=1 {
+                if ((wx + bx + wz + bz) % 3) == 0 {
+                    Self::safe_set_block(chunk, chunk_coord, wx + bx, canopy_base - 1, wz + bz, Block::OakLeaves);
                 }
             }
         }
     }
 
-    /// Plant a Spruce tree: conical tree with 1-block trunk and 3-layer foliage
+    /// Plant a Spruce tree: Tall conical tree with tiered branches
     fn plant_spruce(tree: &Tree, chunk_coord: &crate::utils::ChunkCoord, x: i32, z: i32, world_y: i32, chunk: &mut super::chunk::Chunk) {
-        use crate::utils::BlockCoord;
-        const CHUNK_SIZE: i32 = 16;
-        
         let trunk_h = tree.trunk_height;
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE as i32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE as i32;
+        let wx = chunk_world_x + x;
+        let wz = chunk_world_z + z;
         
-        // Place trunk vertically
+        // Tall straight trunk
         for ty in 0..trunk_h {
             let wy = world_y + ty;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local >= 0 && cy_local < CHUNK_SIZE {
-                chunk.set_block(&BlockCoord(x as usize, cy_local as usize, z as usize), Block::SpruceWood, false);
-            }
+            Self::safe_set_block(chunk, chunk_coord, wx, wy, wz, Block::SpruceWood);
         }
         
-        // Place foliage: 3 layers in conical shape (2x2, 2x2, 1x1)
-        let leaves_base = world_y + trunk_h - 2;
-        for ly in 0..3 {
-            let wy = leaves_base + ly;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local < 0 || cy_local >= CHUNK_SIZE as i32 { continue; }
+        // Conical foliage with multiple tiers
+        // Start narrow at top, widen toward bottom
+        let foliage_start = trunk_h / 3; // Start foliage 1/3 up the trunk
+        let foliage_height = trunk_h - foliage_start;
+        
+        for tier in 0..foliage_height {
+            let wy = world_y + foliage_start + tier;
+            let tier_from_top = foliage_height - tier - 1;
             
-            // Radius shrinks for upper layers (cone shape)
-            let radius = match ly {
-                0 => 2,      // Bottom: wide
-                1 => 1,      // Middle: medium
-                _ => 1,      // Top: narrow
-            };
+            // Radius increases toward bottom, with periodic narrowing for tiered look
+            let base_radius = (tier_from_top / 2).min(3);
+            let is_narrow_tier = tier % 2 == 1;
+            let radius = if is_narrow_tier { (base_radius as i32 - 1).max(0) } else { base_radius as i32 };
             
             for lx in -radius..=radius {
                 for lz in -radius..=radius {
-                    let nx = x + lx;
-                    let nz = z + lz;
-                    if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                    
                     let dist_sq = lx * lx + lz * lz;
-                    // Create circular foliage (not square)
-                    if dist_sq <= (radius * radius + 1) {
-                        chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::SpruceLeaves, false);
+                    
+                    // Circular shape with diamond pattern for spruces
+                    if dist_sq <= radius * radius + 1 {
+                        // Skip center on branch tiers to show trunk
+                        if !(lx == 0 && lz == 0) || tier == foliage_height - 1 {
+                            // Add some droop to outer leaves
+                            let droop = if dist_sq == radius * radius && !is_narrow_tier { -1 } else { 0 };
+                            Self::safe_set_block(chunk, chunk_coord, wx + lx, wy + droop, wz + lz, Block::SpruceLeaves);
+                        }
                     }
                 }
             }
         }
+        
+        // Pointed top
+        Self::safe_set_block(chunk, chunk_coord, wx, world_y + trunk_h, wz, Block::SpruceLeaves);
+        Self::safe_set_block(chunk, chunk_coord, wx, world_y + trunk_h + 1, wz, Block::SpruceLeaves);
     }
 
-    /// Plant a Birch tree: tall thin tree with 1-block trunk and 2-layer foliage
+    /// Plant a Birch tree: Elegant tree with slender trunk and airy canopy
     fn plant_birch(tree: &Tree, chunk_coord: &crate::utils::ChunkCoord, x: i32, z: i32, world_y: i32, chunk: &mut super::chunk::Chunk) {
-        use crate::utils::BlockCoord;
-        const CHUNK_SIZE: i32 = 16;
-        const BIRCH_LEAF_RADIUS: i32 = 1;
-        
         let trunk_h = tree.trunk_height;
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE as i32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE as i32;
+        let wx = chunk_world_x + x;
+        let wz = chunk_world_z + z;
         
-        // Place trunk vertically
+        // Slender trunk - birch trees are thin
         for ty in 0..trunk_h {
             let wy = world_y + ty;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local >= 0 && cy_local < CHUNK_SIZE {
-                chunk.set_block(&BlockCoord(x as usize, cy_local as usize, z as usize), Block::BirchWood, false);
+            Self::safe_set_block(chunk, chunk_coord, wx, wy, wz, Block::BirchWood);
+        }
+        
+        // Small branches near top
+        let branch_y = world_y + trunk_h - 2;
+        for dir in 0..4 {
+            let (bx, bz) = match dir {
+                0 => (1, 0),
+                1 => (-1, 0),
+                2 => (0, 1),
+                _ => (0, -1),
+            };
+            if ((wx + wz + dir) % 2) == 0 {
+                Self::safe_set_block(chunk, chunk_coord, wx + bx, branch_y, wz + bz, Block::BirchWood);
             }
         }
         
-        // Place foliage: 2 layers with compact spherical shape
-        let leaves_base = world_y + trunk_h - 2;
-        for ly in 0..2 {
-            let wy = leaves_base + ly;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local < 0 || cy_local >= CHUNK_SIZE as i32 { continue; }
-            
-            for lx in -BIRCH_LEAF_RADIUS..=BIRCH_LEAF_RADIUS {
-                for lz in -BIRCH_LEAF_RADIUS..=BIRCH_LEAF_RADIUS {
-                    let nx = x + lx;
-                    let nz = z + lz;
-                    if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                    
-                    // Place leaves in 3x3 area
-                    chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::BirchLeaves, false);
+        // Light, airy canopy - birches have less dense foliage
+        let canopy_base = world_y + trunk_h - 3;
+        
+        // Multiple small clusters instead of one solid mass
+        for (cx, cz, cy_off) in [(0i32, 0i32, 2i32), (1, 0, 1), (-1, 0, 1), (0, 1, 1), (0, -1, 1)] {
+            let cluster_y = canopy_base + cy_off;
+            for ly in 0..3 {
+                let wy = cluster_y + ly;
+                let radius = if ly == 1 { 2 } else { 1 };
+                
+                for lx in -radius..=radius {
+                    for lz in -radius..=radius {
+                        let dist_sq = lx * lx + lz * lz;
+                        if dist_sq <= radius * radius {
+                            // Sparse leaves - skip some for airy look
+                            if ((wx + cx + lx + wz + cz + lz + wy) % 3) != 0 {
+                                Self::safe_set_block(chunk, chunk_coord, 
+                                    wx + cx + lx, wy, wz + cz + lz, Block::BirchLeaves);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Plant an Acacia tree: dry climate tree with 1-block trunk and wide foliage
+    /// Plant an Acacia tree: Distinctive flat-topped tree with angled trunk
     fn plant_acacia(tree: &Tree, chunk_coord: &crate::utils::ChunkCoord, x: i32, z: i32, world_y: i32, chunk: &mut super::chunk::Chunk) {
-        use crate::utils::BlockCoord;
-        const CHUNK_SIZE: i32 = 16;
-        
         let trunk_h = tree.trunk_height;
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE as i32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE as i32;
+        let wx = chunk_world_x + x;
+        let wz = chunk_world_z + z;
         
-        // Place trunk vertically
+        // Acacia has a distinctive angled trunk
+        let lean_dir = ((wx + wz) % 4) as i32;
+        let (lean_x, lean_z) = match lean_dir {
+            0 => (1, 0),
+            1 => (-1, 0),
+            2 => (0, 1),
+            _ => (0, -1),
+        };
+        
+        // Angled trunk
+        let mut curr_x = wx;
+        let mut curr_z = wz;
         for ty in 0..trunk_h {
             let wy = world_y + ty;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local >= 0 && cy_local < CHUNK_SIZE {
-                chunk.set_block(&BlockCoord(x as usize, cy_local as usize, z as usize), Block::AcaciaWood, false);
+            Self::safe_set_block(chunk, chunk_coord, curr_x, wy, curr_z, Block::AcaciaWood);
+            
+            // Lean every 3 blocks
+            if ty > 0 && ty % 3 == 0 && ty < trunk_h - 2 {
+                curr_x += lean_x;
+                curr_z += lean_z;
             }
         }
         
-        // Acacia: wide, flat foliage - 2 layers with radius 2
-        let leaves_base = world_y + trunk_h - 1;
-        for ly in 0..2 {
-            let wy = leaves_base + ly;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local < 0 || cy_local >= CHUNK_SIZE as i32 { continue; }
-            
-            let radius = 2;
-            for lx in -radius..=radius {
-                for lz in -radius..=radius {
-                    let nx = x + lx;
-                    let nz = z + lz;
-                    if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                    
-                    // Create circular foliage shape
-                    let dist_sq = lx * lx + lz * lz;
-                    if dist_sq <= 5 {
-                        chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::AcaciaLeaves, false);
+        // Forked top - two branches going different directions
+        let fork_y = world_y + trunk_h - 1;
+        
+        // Main branch continues in lean direction
+        Self::safe_set_block(chunk, chunk_coord, curr_x + lean_x, fork_y, curr_z + lean_z, Block::AcaciaWood);
+        Self::safe_set_block(chunk, chunk_coord, curr_x + lean_x * 2, fork_y + 1, curr_z + lean_z * 2, Block::AcaciaWood);
+        
+        // Secondary branch goes perpendicular
+        let (perp_x, perp_z) = (lean_z, -lean_x);
+        Self::safe_set_block(chunk, chunk_coord, curr_x + perp_x, fork_y, curr_z + perp_z, Block::AcaciaWood);
+        
+        // Flat, wide canopy - characteristic of acacias
+        let canopy_centers = [
+            (curr_x + lean_x * 2, fork_y + 2, curr_z + lean_z * 2),
+            (curr_x + perp_x, fork_y + 1, curr_z + perp_z),
+            (curr_x, fork_y + 1, curr_z),
+        ];
+        
+        for (cx, cy, cz) in canopy_centers {
+            // Flat canopy - only 1-2 blocks tall but wide
+            for ly in 0..2 {
+                let wy = cy + ly;
+                let radius = if ly == 0 { 3 } else { 2 };
+                
+                for lx in -radius..=radius {
+                    for lz in -radius..=radius {
+                        let dist_sq = lx * lx + lz * lz;
+                        // Slightly irregular edge
+                        let max_dist = radius * radius + ((cx + lx + cz + lz) % 2);
+                        if dist_sq <= max_dist {
+                            Self::safe_set_block(chunk, chunk_coord, cx + lx, wy, cz + lz, Block::AcaciaLeaves);
+                        }
                     }
                 }
             }
         }
     }
 
-    /// Plant a Dark Oak tree: large tree with 2-block trunk and dense foliage
+    /// Plant a Dark Oak tree: Massive tree with thick trunk and dense canopy
     fn plant_darkoak(tree: &Tree, chunk_coord: &crate::utils::ChunkCoord, x: i32, z: i32, world_y: i32, chunk: &mut super::chunk::Chunk) {
-        use crate::utils::BlockCoord;
-        const CHUNK_SIZE: i32 = 16;
-        
         let trunk_h = tree.trunk_height;
+        let chunk_world_x = chunk_coord.0 as i32 * CHUNK_SIZE as i32;
+        let chunk_world_z = chunk_coord.2 as i32 * CHUNK_SIZE as i32;
+        let wx = chunk_world_x + x;
+        let wz = chunk_world_z + z;
         
-        // Dark Oak: 2x2 trunk base
-        for tx in 0..2 {
-            for tz in 0..2 {
-                for ty in 0..trunk_h {
-                    let wy = world_y + ty;
-                    let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-                    if cy_local >= 0 && cy_local < CHUNK_SIZE {
-                        let nx = x + tx;
-                        let nz = z + tz;
-                        if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                        chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::DarkOakWood, false);
-                    }
+        // Thick 2x2 trunk
+        for ty in 0..trunk_h {
+            let wy = world_y + ty;
+            for tx in 0..2 {
+                for tz in 0..2 {
+                    Self::safe_set_block(chunk, chunk_coord, wx + tx, wy, wz + tz, Block::DarkOakWood);
                 }
             }
         }
         
-        // Dark Oak: Dense foliage - 3 layers, large radius
-        let leaves_base = world_y + trunk_h - 3;
-        for ly in 0..3 {
-            let wy = leaves_base + ly;
-            let cy_local = wy - chunk_coord.1 as i32 * CHUNK_SIZE;
-            if cy_local < 0 || cy_local >= CHUNK_SIZE as i32 { continue; }
+        // Large branches extending outward at various heights
+        let branch_heights = [trunk_h * 2 / 3, trunk_h - 2, trunk_h - 4];
+        for (i, &bh) in branch_heights.iter().enumerate() {
+            let branch_y = world_y + bh;
+            let dir = i as i32;
+            let (bx, bz) = match dir % 4 {
+                0 => (2, 1),
+                1 => (-1, 2),
+                2 => (1, -1),
+                _ => (-1, -1),
+            };
             
+            // Thick branch
+            Self::safe_set_block(chunk, chunk_coord, wx + bx, branch_y, wz + bz, Block::DarkOakWood);
+            Self::safe_set_block(chunk, chunk_coord, wx + bx * 2, branch_y + 1, wz + bz * 2, Block::DarkOakWood);
+        }
+        
+        // Massive, dense canopy
+        let canopy_base = world_y + trunk_h - 4;
+        
+        // Multiple layers with large radius
+        for ly in 0..6 {
+            let wy = canopy_base + ly;
+            // Radius varies: widest in middle
             let radius = match ly {
-                0 => 3,     // Bottom: very wide
-                1 => 2,     // Middle: medium
-                _ => 1,     // Top: narrow
+                0 => 3,
+                1 | 2 => 4,
+                3 => 4,
+                4 => 3,
+                _ => 2,
             };
             
             for lx in -radius..=radius {
                 for lz in -radius..=radius {
-                    let nx = x + lx;
-                    let nz = z + lz;
-                    if nx < 0 || nz < 0 || nx >= CHUNK_SIZE as i32 || nz >= CHUNK_SIZE as i32 { continue; }
-                    
-                    chunk.set_block(&BlockCoord(nx as usize, cy_local as usize, nz as usize), Block::DarkOakLeaves, false);
+                    let dist_sq = lx * lx + lz * lz;
+                    if dist_sq <= radius * radius + 2 {
+                        // Dense canopy with few gaps
+                        let is_edge = dist_sq > (radius - 1) * (radius - 1);
+                        let skip = is_edge && ((wx + lx + wz + lz + wy) % 7) == 0;
+                        
+                        if !skip {
+                            // Offset to center on 2x2 trunk
+                            Self::safe_set_block(chunk, chunk_coord, wx + lx + 1, wy, wz + lz + 1, Block::DarkOakLeaves);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Roots at base
+        for rx in -1..3 {
+            for rz in -1..3 {
+                if (rx == -1 || rx == 2 || rz == -1 || rz == 2) && ((rx + rz) % 2) == 0 {
+                    Self::safe_set_block(chunk, chunk_coord, wx + rx, world_y - 1, wz + rz, Block::DarkOakWood);
                 }
             }
         }
