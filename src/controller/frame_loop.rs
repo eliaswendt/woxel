@@ -124,7 +124,15 @@ impl FrameLoopContext {
 
         // Update chunks based on player position
         let p_pos = game.player_pos;
+        let render_distance_changed = game.render_distance_changed;
+        let new_render_distance = game.render_distance;
         drop(game); // Release game_state borrow
+
+        // Check if render distance changed - recreate Scene
+        if render_distance_changed {
+            self.game_state.borrow_mut().render_distance_changed = false;
+            *self.core.borrow_mut() = crate::model::Scene::new(new_render_distance, device);
+        }
 
         self.core.borrow_mut().update(
             &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize),
@@ -222,16 +230,7 @@ impl FrameLoopContext {
 
         // Build egui input from queued events
         let dpr = window.device_pixel_ratio() as f32;
-        let mut raw_input = egui::RawInput::default();
-        raw_input.time = Some(now as f64 / 1000.0);
-        raw_input.screen_rect = Some(egui::Rect::from_min_size(
-            egui::Pos2::new(0.0, 0.0),
-            egui::vec2(
-                render_state.width as f32 / dpr,
-                render_state.height as f32 / dpr,
-            ),
-        ));
-        raw_input.events.extend(self.egui_events.borrow_mut().drain(..));
+        let egui_events: Vec<egui::Event> = self.egui_events.borrow_mut().drain(..).collect();
 
         // Set DPI scale for egui
         self.egui_ctx.set_pixels_per_point(dpr);
@@ -247,7 +246,12 @@ impl FrameLoopContext {
             render_state.height,
             dt,
             now,
+            egui_events,
         );
+
+        // Check if egui wants pointer input - if so, don't process game clicks
+        let egui_wants_pointer = full_output.platform_output.cursor_icon != egui::CursorIcon::Default
+            || self.egui_ctx.wants_pointer_input();
 
         // Tessellate and store for rendering in next step
         let dpr = window.device_pixel_ratio() as f32;
@@ -255,6 +259,11 @@ impl FrameLoopContext {
         render_state.egui_primitives = Some(primitives);
         render_state.egui_full_output = Some(full_output);
         render_state.egui_dpr = dpr;
+
+        // Clear game clicks if egui is using pointer (window focus or hover)
+        if egui_wants_pointer {
+            self.input_state.borrow_mut().clear_clicks();
+        }
     }
 
     fn handle_resize(

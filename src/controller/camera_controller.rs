@@ -9,6 +9,9 @@ pub struct GameState {
     pub player_pitch: f32,
     pub player_active: bool,
     pub camera_follows_player: bool,
+    // Render distance (chunks per axis)
+    pub render_distance: [usize; 3],
+    pub render_distance_changed: bool,
 }
 
 impl GameState {
@@ -20,6 +23,8 @@ impl GameState {
             player_pitch: 0.0,
             player_active: false,
             camera_follows_player: true,
+            render_distance: [32, 32, 32],
+            render_distance_changed: false,
         }
     }
 
@@ -31,6 +36,13 @@ impl GameState {
         self.player_active = !self.player_active;
         if self.player_active {
             self.player_vel = Vec3::ZERO;
+        }
+    }
+    
+    pub fn set_render_distance(&mut self, x: usize, y: usize, z: usize) {
+        if self.render_distance != [x, y, z] {
+            self.render_distance = [x, y, z];
+            self.render_distance_changed = true;
         }
     }
 }

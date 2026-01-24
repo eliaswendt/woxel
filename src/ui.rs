@@ -8,6 +8,9 @@ use crate::controller::InputState;
 use crate::model::Scene;
 use crate::model::Block;
 
+const HOTBAR_ITEM_SIZE: f32 = 28.0;
+const HOTBAR_ITEM_SPACING: f32 = 2.0;
+
 /// Build the complete UI and return egui output
 pub fn build_ui(
     egui_ctx: &Context,
@@ -19,46 +22,68 @@ pub fn build_ui(
     canvas_height: u32,
     dt: f32,
     now: f64,
+    events: Vec<egui::Event>,
 ) -> egui::FullOutput {
+    let ppp = egui_ctx.pixels_per_point();
+    let logical_width = canvas_width as f32 / ppp;
+    let logical_height = canvas_height as f32 / ppp;
+    
     let mut raw_input = egui::RawInput::default();
     raw_input.time = Some(now as f64 / 1000.0);
     raw_input.screen_rect = Some(egui::Rect::from_min_size(
         egui::Pos2::new(0.0, 0.0),
-        egui::vec2(canvas_width as f32, canvas_height as f32),
+        egui::vec2(logical_width, logical_height),
     ));
+    
+    // Add pointer events (scaled to logical pixels)
+    for event in events {
+        let scaled_event = match event {
+            egui::Event::PointerMoved(pos) => {
+                egui::Event::PointerMoved(egui::pos2(pos.x / ppp, pos.y / ppp))
+            }
+            egui::Event::PointerButton { pos, button, pressed, modifiers } => {
+                egui::Event::PointerButton {
+                    pos: egui::pos2(pos.x / ppp, pos.y / ppp),
+                    button,
+                    pressed,
+                    modifiers,
+                }
+            }
+            other => other,
+        };
+        raw_input.events.push(scaled_event);
+    }
 
     egui_ctx.run(raw_input, |ctx| {
-        draw_crosshair(ctx);
+        draw_crosshair(ctx, ppp);
         draw_debug_window(ctx, cam, game_state, core, dt);
-        draw_settings_window(ctx, cam, canvas_width);
-        draw_hotbar(ctx, input_state, canvas_height);
+        draw_hotbar(ctx, input_state, canvas_width, canvas_height, ppp);
     })
 }
 
-fn draw_crosshair(ctx: &Context) {
+fn draw_crosshair(ctx: &Context, _ppp: f32) {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::TOP, egui::Id::new("crosshair")));
-    let screen_size = ctx.available_rect();
-    let center = screen_size.center();
+    let screen_rect = ctx.viewport_rect();
+    let center_x = screen_rect.width() / 2.0;
+    let center_y = screen_rect.height() / 2.0;
     let size = 10.0;
     painter.line_segment(
         [
-            egui::Pos2::new(center.x - size, center.y),
-            egui::Pos2::new(center.x + size, center.y),
+            egui::Pos2::new(center_x - size, center_y),
+            egui::Pos2::new(center_x + size, center_y),
         ],
         egui::Stroke::new(1.0, egui::Color32::WHITE),
     );
     painter.line_segment(
         [
-            egui::Pos2::new(center.x, center.y - size),
-            egui::Pos2::new(center.x, center.y + size),
+            egui::Pos2::new(center_x, center_y - size),
+            egui::Pos2::new(center_x, center_y + size),
         ],
         egui::Stroke::new(1.0, egui::Color32::WHITE),
     );
 }
 
-fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, core: &Rc<RefCell<Scene>>, dt: f32) {
-
-    let eye = cam.borrow().eye;
+fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, _core: &Rc<RefCell<Scene>>, dt: f32) {
     let player_pos = game_state.borrow().player_pos;
     let chunk_x = (player_pos.x / CHUNK_SIZE as f32).floor() as i32;
     let chunk_y = (player_pos.y / CHUNK_SIZE as f32).floor() as i32;
@@ -66,80 +91,108 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
 
     egui::Window::new("Debug")
         .default_pos([8.0, 8.0])
+        .default_width(180.0)
+        .resizable(false)
         .show(ctx, |ui| {
-            ui.label(
-                egui::RichText::new(format!("FPS: {:.0}", if dt > 0.0 { 1.0 / dt } else { 0.0 }))
-                    .small(),
-            );
-            ui.label(egui::RichText::new(format!("Pos: x: {:.0} y: {:.0} z: {:.0}", player_pos.x, player_pos.y, player_pos.z)).small());
-            ui.label(egui::RichText::new(format!("Chunk: x: {} y: {} z: {}", chunk_x, chunk_y, chunk_z)).small());
-            ui.label(egui::RichText::new(format!("Yaw: {:.2} Pitch: {:.2}", cam.borrow().yaw.to_degrees(), cam.borrow().pitch.to_degrees())).small());
-            ui.label(egui::RichText::new(format!("Chunks: 64x64x64 (fixed)")).small());
+            ui.label(format!("FPS: {:.0}", if dt > 0.0 { 1.0 / dt } else { 0.0 }));
+            ui.label(format!("Pos: {:.0} {:.0} {:.0}", player_pos.x, player_pos.y, player_pos.z));
+            ui.label(format!("Chunk: {} {} {}", chunk_x, chunk_y, chunk_z));
+            ui.label(format!("Yaw: {:.1}° Pitch: {:.1}°", cam.borrow().yaw.to_degrees(), cam.borrow().pitch.to_degrees()));
+            
             ui.separator();
-            ui.label(egui::RichText::new("Controls:").small());
-            ui.label(egui::RichText::new("WASD - Move").small());
-            ui.label(egui::RichText::new("Space - Up").small());
-            ui.label(egui::RichText::new("Shift - Down").small());
-            ui.label(egui::RichText::new("Ctrl - Speed boost").small());
-            ui.label(egui::RichText::new("C - Toggle camera lock").small());
-            ui.label(egui::RichText::new("P - Toggle player mode").small());
-        });
-}
-
-fn draw_settings_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, canvas_width: u32) {
-    egui::Window::new("Settings")
-        .default_pos([canvas_width as f32 - 140.0, 8.0])
-        .default_size([130.0, 100.0])
-        .show(ctx, |ui| {
+            
+            // FOV slider
             let mut fov_deg = cam.borrow().fov_y.to_degrees().clamp(30.0, 120.0);
-            ui.label(egui::RichText::new("FOV").small());
-            if ui.add(egui::Slider::new(&mut fov_deg, 30.0..=120.0).step_by(5.0)).changed() {
-                cam.borrow_mut().fov_y = fov_deg.to_radians();
+            ui.horizontal(|ui| {
+                ui.label("FOV");
+                if ui.add(egui::Slider::new(&mut fov_deg, 30.0..=120.0).step_by(5.0)).changed() {
+                    cam.borrow_mut().fov_y = fov_deg.to_radians();
+                }
+            });
+            
+            ui.separator();
+            ui.label("Render Distance");
+            
+            // Render distance sliders
+            let mut gs = game_state.borrow_mut();
+            let mut rd = gs.render_distance;
+            
+            ui.horizontal(|ui| {
+                ui.label("X:");
+                ui.add(egui::Slider::new(&mut rd[0], 4..=128).step_by(4.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Y:");
+                ui.add(egui::Slider::new(&mut rd[1], 4..=128).step_by(4.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Z:");
+                ui.add(egui::Slider::new(&mut rd[2], 4..=128).step_by(4.0));
+            });
+            
+            // Check if changed and update
+            if rd != gs.render_distance {
+                gs.set_render_distance(rd[0], rd[1], rd[2]);
             }
         });
 }
 
-fn draw_hotbar(ctx: &Context, input_state: &Rc<RefCell<InputState>>, canvas_height: u32) {
+fn draw_hotbar(ctx: &Context, input_state: &Rc<RefCell<InputState>>, _canvas_width: u32, _canvas_height: u32, _ppp: f32) {
+    let blocks = [
+        (Block::Grass, "1"),
+        (Block::Dirt, "2"),
+        (Block::Stone, "3"),
+        (Block::Sand, "4"),
+        (Block::Gravel, "5"),
+        (Block::Cobblestone, "6"),
+        (Block::Bedrock, "7"),
+        (Block::OakLeaves, "8"),
+        (Block::Wood, "9"),
+        (Block::Water, "0"),
+        (Block::Cloud, "-"),
+    ];
+
+    let screen_rect = ctx.viewport_rect();
+    let hotbar_width = blocks.len() as f32 * (HOTBAR_ITEM_SIZE + HOTBAR_ITEM_SPACING) + HOTBAR_ITEM_SPACING * 2.0;
+    let hotbar_height = HOTBAR_ITEM_SIZE + HOTBAR_ITEM_SPACING * 2.0;
+    let hotbar_x = (screen_rect.width() - hotbar_width) / 2.0;
+    let hotbar_y = screen_rect.height() - hotbar_height - 8.0;
+
     egui::Area::new(egui::Id::new("hotbar"))
-        .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -8.0])
+        .fixed_pos(egui::Pos2::new(hotbar_x, hotbar_y))
         .show(ctx, |ui| {
+            let current_block = input_state.borrow().selected_block;
+            
             ui.horizontal(|ui| {
-                let blocks = [
-                    (Block::Grass, "1"),
-                    (Block::Dirt, "2"),
-                    (Block::Stone, "3"),
-                    (Block::Sand, "4"),
-                    (Block::Gravel, "5"),
-                    (Block::Cobblestone, "6"),
-                    (Block::Bedrock, "7"),
-                    (Block::OakLeaves, "8"),
-                    (Block::Wood, "9"),
-                    (Block::Water, "0"),
-                    (Block::Cloud, "-"),
-                ];
-                let current = input_state.borrow().selected_block;
+                ui.spacing_mut().item_spacing = egui::vec2(HOTBAR_ITEM_SPACING, 0.0);
+                
                 for (block, key) in blocks.iter() {
-                    let is_selected = current == *block;
+                    let is_selected = current_block == *block;
                     let color = block.color(0);
                     let color32 = egui::Color32::from_rgb(
                         (color[0] * 255.0) as u8,
                         (color[1] * 255.0) as u8,
                         (color[2] * 255.0) as u8,
                     );
-                    let size = if is_selected { 40.0 } else { 36.0 };
+
+                    let border_color = if is_selected {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::from_gray(100)
+                    };
+                    let border_width = if is_selected { 2.0 } else { 1.0 };
+
                     let frame = egui::Frame::NONE
                         .fill(color32)
-                        .stroke(if is_selected {
-                            egui::Stroke::new(2.0, egui::Color32::YELLOW)
-                        } else {
-                            egui::Stroke::new(0.5, egui::Color32::BLACK)
-                        })
-                        .inner_margin(2.0);
+                        .stroke(egui::Stroke::new(border_width, border_color))
+                        .inner_margin(egui::Margin::same(2));
+
                     frame.show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(size, size));
+                        ui.set_min_size(egui::vec2(HOTBAR_ITEM_SIZE, HOTBAR_ITEM_SIZE));
+                        ui.set_max_size(egui::vec2(HOTBAR_ITEM_SIZE, HOTBAR_ITEM_SIZE));
                         ui.vertical_centered(|ui| {
-                            ui.add_space(size / 2.0 - 6.0);
-                            ui.label(egui::RichText::new(*key).size(10.0).color(egui::Color32::WHITE));
+                            ui.add_space(HOTBAR_ITEM_SIZE / 2.0 - 6.0);
+                            ui.label(egui::RichText::new(*key).size(9.0).color(egui::Color32::WHITE));
                         });
                     });
                 }

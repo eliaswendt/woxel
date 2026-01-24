@@ -12,7 +12,7 @@ pub struct PhysicsSystem {
 impl PhysicsSystem {
     pub fn new() -> Self {
         Self {
-            gravity: -9.8,
+            gravity: -9.81,
             max_fall_speed: 20.0,
         }
     }

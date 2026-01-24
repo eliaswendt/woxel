@@ -108,9 +108,10 @@ async fn setup_app(
     }));
 
     // World and game state
-    let core = Rc::new(RefCell::new(Scene::new([100, 100, 100], gpu.device.as_ref())));
-    let raycast_target: Rc<RefCell<Option<(i32, i32, i32)>>> = Rc::new(RefCell::new(None));
     let game_state = Rc::new(RefCell::new(GameState::new()));
+    let initial_render_distance = game_state.borrow().render_distance;
+    let core = Rc::new(RefCell::new(Scene::new(initial_render_distance, gpu.device.as_ref())));
+    let raycast_target: Rc<RefCell<Option<(i32, i32, i32)>>> = Rc::new(RefCell::new(None));
     let input_state = Rc::new(RefCell::new(InputState::new()));
     let egui_events: Rc<RefCell<Vec<egui::Event>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -334,15 +335,18 @@ fn setup_input_listeners(
         let input_state = input_state.clone();
         let egui_events_q = egui_events.clone();
         let mm = Closure::wrap(Box::new(move |e: MouseEvent| {
+            let px = e.client_x() as f32;
+            let py = e.client_y() as f32;
+            
+            // Always send pointer position to egui
+            egui_events_q.borrow_mut().push(egui::Event::PointerMoved(egui::pos2(px, py)));
+            
+            // If not locked, game doesn't get mouse input
             if input_state.borrow().pointer_locked {
                 let dx = e.movement_x() as f32;
                 let dy = e.movement_y() as f32;
                 input_state.borrow_mut().look_delta.0 += dx;
                 input_state.borrow_mut().look_delta.1 += dy;
-            } else {
-                let px = e.client_x() as f32;
-                let py = e.client_y() as f32;
-                egui_events_q.borrow_mut().push(egui::Event::PointerMoved(egui::pos2(px, py)));
             }
         }) as Box<dyn FnMut(MouseEvent)>);
         document.add_event_listener_with_callback("mousemove", mm.as_ref().unchecked_ref())?;
@@ -352,11 +356,30 @@ fn setup_input_listeners(
     // Mouse down - detect block placement/removal
     {
         let input_state = input_state.clone();
+        let egui_events_q = egui_events.clone();
         let mousedown = Closure::wrap(Box::new(move |e: MouseEvent| {
             let button = e.button();
+            let pos = egui::pos2(e.client_x() as f32, e.client_y() as f32);
+            
             match button {
-                0 => input_state.borrow_mut().left_click_pressed = true,   // Left click
-                2 => input_state.borrow_mut().right_click_pressed = true,  // Right click
+                0 => {
+                    egui_events_q.borrow_mut().push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::default(),
+                    });
+                    input_state.borrow_mut().left_click_pressed = true;
+                }
+                2 => {
+                    egui_events_q.borrow_mut().push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::default(),
+                    });
+                    input_state.borrow_mut().right_click_pressed = true;
+                }
                 _ => {},
             }
             e.prevent_default();
@@ -368,7 +391,24 @@ fn setup_input_listeners(
     // Mouse up - clear click pressed state
     {
         let input_state = input_state.clone();
-        let mouseup = Closure::wrap(Box::new(move |_e: MouseEvent| {
+        let egui_events_q = egui_events.clone();
+        let mouseup = Closure::wrap(Box::new(move |e: MouseEvent| {
+            let pos = egui::pos2(e.client_x() as f32, e.client_y() as f32);
+            
+            // Send both button releases to egui
+            egui_events_q.borrow_mut().push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            egui_events_q.borrow_mut().push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            
             let mut state = input_state.borrow_mut();
             state.left_click_pressed = false;
             state.right_click_pressed = false;
