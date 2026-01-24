@@ -115,10 +115,12 @@ impl App {
         };
         queue.write_buffer(&camera_buffer, 0, bytemuck::bytes_of(&cam_buf_data));
         
+        // Lighting uniform - tuned for vibrant look
+        // Lower ambient + higher sun = more contrast and depth
         let lighting_buf_data = frame_loop::LightingUniform {
-            sun_dir: [0.5, -1.0, 0.3],
-            sun_intensity: 1.0,
-            ambient: 0.35,
+            sun_dir: [0.4, 0.8, 0.3],  // Slight angle for interesting shadows
+            sun_intensity: 0.7,         // Strong directional light
+            ambient: 0.35,              // Lower ambient for more contrast
             _pad1: 0.0,
             _pad2: 0.0,
             _pad3: 0.0,

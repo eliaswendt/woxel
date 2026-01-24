@@ -193,6 +193,11 @@ impl Scene {
             ); 
             let active_idx = self.active_idx(&chunk_coord);
 
+            // TODO: temporary optimization: remove
+            if chunk_coord.1 <= -2 {
+                // do not load chunks below y=0
+                continue;
+            }
 
             // this manual check is needed because Rc::get_mut() will return None for shared references (like our empty chunk)
             if self.active[active_idx].is_some() && Rc::ptr_eq(self.active[active_idx].as_ref().unwrap(), &self.empty_entry) {

@@ -980,18 +980,19 @@ impl VoxelDensityGenerator {
                     chunk.set_block(&BlockCoord(lx as usize, ly as usize, lz as usize), block, false);
 
                     // ============================================
-                    // 3D CLOUDS at height 200-210
+                    // 3D CLOUDS at height 200-204 (thinner, wispier)
                     // ============================================
                     const CLOUD_BASE: isize = 200;
-                    const CLOUD_TOP: isize = 210;
+                    const CLOUD_TOP: isize = 205;
                     if world_y >= CLOUD_BASE && world_y <= CLOUD_TOP {
-                        // 2D base noise determines where clouds exist
-                        let cloud_base_noise = Self::simple_noise(fwx * 0.015, fwz * 0.015);
-                        let cloud_detail = Self::simple_noise(fwx * 0.05 + 100.0, fwz * 0.05 + 100.0) * 0.25;
+                        // 2D base noise determines where clouds exist - use larger scale for patchier coverage
+                        let cloud_base_noise = Self::simple_noise(fwx * 0.012, fwz * 0.012);
+                        let cloud_detail = Self::simple_noise(fwx * 0.04 + 100.0, fwz * 0.04 + 100.0) * 0.2;
                         
-                        if cloud_base_noise + cloud_detail > 0.0 {
+                        // Higher threshold = sparser clouds
+                        if cloud_base_noise + cloud_detail > 0.25 {
                             // Cloud density decreases toward edges (both horizontal and vertical)
-                            let cloud_strength = cloud_base_noise + cloud_detail;
+                            let cloud_strength = cloud_base_noise + cloud_detail - 0.25;
                             
                             // Vertical shape: clouds are thicker in the middle
                             let cloud_mid = (CLOUD_BASE + CLOUD_TOP) / 2;
@@ -999,12 +1000,12 @@ impl VoxelDensityGenerator {
                             let max_y_dist = ((CLOUD_TOP - CLOUD_BASE) / 2) as f32;
                             let y_factor = 1.0 - (y_dist / max_y_dist);
                             
-                            // 3D noise for puffy cloud shape
-                            let cloud_3d = Self::simple_noise(fwx * 0.08 + fwy * 0.1, fwz * 0.08 - fwy * 0.1);
-                            let cloud_3d_detail = Self::simple_noise(fwx * 0.15 + 50.0, fwz * 0.15 + fwy * 0.2) * 0.4;
+                            // 3D noise for puffy cloud shape - more variation
+                            let cloud_3d = Self::simple_noise(fwx * 0.1 + fwy * 0.15, fwz * 0.1 - fwy * 0.15);
+                            let cloud_3d_detail = Self::simple_noise(fwx * 0.2 + 50.0, fwz * 0.2 + fwy * 0.25) * 0.3;
                             
-                            // Combine: need base noise + good y position + 3D shape
-                            let threshold = 0.3 - (cloud_strength * 0.4) - (y_factor * 0.3);
+                            // Combine: need base noise + good y position + 3D shape (higher threshold = wispier)
+                            let threshold = 0.4 - (cloud_strength * 0.3) - (y_factor * 0.25);
                             if cloud_3d + cloud_3d_detail > threshold {
                                 chunk.set_block(&BlockCoord(lx as usize, ly as usize, lz as usize), Block::Cloud, false);
                             }

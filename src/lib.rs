@@ -69,11 +69,12 @@ async fn setup_app(
     }));
     gpu.queue.as_ref().write_buffer(&cam_buf, 0, bytemuck::bytes_of(&*cam_buf_data.borrow()));
 
-    // Lighting uniform
+    // Lighting uniform - tuned for vibrant look
+    // Lower ambient + higher sun = more contrast and depth
     let lighting_buf_data = Rc::new(RefCell::new(LightingUniform {
-        sun_dir: [0.5, 1.0, 0.5],
-        sun_intensity: 0.3,
-        ambient: 0.7,
+        sun_dir: [0.4, 0.8, 0.3],  // Slight angle for interesting shadows
+        sun_intensity: 0.8,         // Strong directional light
+        ambient: 0.4,              // Lower ambient for more contrast
         _pad1: 0.0,
         _pad2: 0.0,
         _pad3: 0.0,
