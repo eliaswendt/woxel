@@ -7,13 +7,13 @@ use super::world::VoxelDensityGenerator;
 
 
 fn select_lod(distance_to_player: usize) -> LOD {
-    if distance_to_player < 200 {
+    if distance_to_player < 20 {
         0  // Full resolution
     } else if distance_to_player < 40 {
         1  // 1/2 resolution
-    } else if distance_to_player < 50 {
-        2  // 1/4 resolution
     } else if distance_to_player < 60 {
+        2  // 1/4 resolution
+    } else if distance_to_player < 80 {
         3  // 1/8 resolution
     } else {
         4  // 1/16 resolution

@@ -231,7 +231,7 @@ impl Chunk {
             for y in 0..lod_size {
                 for x in 0..lod_size {
                     // Pick the modal block inside this window_size^3 cell (ignore air so surface wins over empty)
-                    let mut block_counts = [0u32; 30]; // Updated for 30 block types
+                    let mut block_counts = [0u32; 40]; // Updated for 40 block types (0-39)
                     let mut any = false;
 
                     for oz in 0..window_size {
