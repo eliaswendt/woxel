@@ -2,6 +2,8 @@
 
 A voxel-based Minecraft-style game engine built with **Rust**, **wgpu**, and **WebAssembly**, featuring both web and native desktop support.
 
+![screenshot](screenshot.png)
+
 ## Features
 
 ✨ **Core Gameplay**
