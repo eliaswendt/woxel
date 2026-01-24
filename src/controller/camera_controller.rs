@@ -12,6 +12,8 @@ pub struct GameState {
     // Render distance (chunks per axis)
     pub render_distance: [usize; 3],
     pub render_distance_changed: bool,
+    // Compute budget for chunk meshing per frame
+    pub compute_budget: u32,
 }
 
 impl GameState {
@@ -23,8 +25,9 @@ impl GameState {
             player_pitch: 0.0,
             player_active: false,
             camera_follows_player: true,
-            render_distance: [32, 32, 32],
+            render_distance: [52, 32, 52],
             render_distance_changed: false,
+            compute_budget: 100,
         }
     }
 

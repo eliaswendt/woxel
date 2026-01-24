@@ -130,6 +130,7 @@ impl FrameLoopContext {
         let p_pos = game.player_pos;
         let render_distance_changed = game.render_distance_changed;
         let new_render_distance = game.render_distance;
+        let compute_budget = game.compute_budget;
         drop(game); // Release game_state borrow
 
         // Check if render distance changed - recreate Scene
@@ -141,7 +142,7 @@ impl FrameLoopContext {
         self.core.borrow_mut().update(
             &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize),
             device,
-            100
+            compute_budget as usize
         );
 
         // Resize handling

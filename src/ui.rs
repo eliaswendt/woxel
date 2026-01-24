@@ -134,6 +134,10 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             if rd != gs.render_distance {
                 gs.set_render_distance(rd[0], rd[1], rd[2]);
             }
+            
+            ui.separator();
+            ui.label("Compute Budget");
+            ui.add(egui::Slider::new(&mut gs.compute_budget, 1..=500).step_by(10.0));
         });
 }
 
