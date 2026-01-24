@@ -133,10 +133,26 @@ impl Scene {
     pub fn set_block(&mut self, world_coord: &WorldCoord, block: Block, overwrite: bool, device: &wgpu::Device) -> bool {
         // Find which chunk contains this block
         let chunk_coord = world_coord.to_chunk_coord();
+        let active_idx = self.active_idx(&chunk_coord);
+        let block_coord = world_coord.to_block_coord();
 
+        // Check if this is the shared empty chunk - if so, we need to replace it with a unique chunk
+        if let Some(entry) = &self.active[active_idx] {
+            if Rc::ptr_eq(entry, &self.empty_entry) {
+                // Replace empty chunk with a new unique chunk containing the new block
+                let mut new_chunk = Chunk::new_empty();
+                if new_chunk.set_block(&block_coord, block, overwrite) {
+                    let mut new_mesh = new_chunk.get_mesh(0);
+                    new_mesh.offset_vertices_by(&chunk_coord);
+                    self.active[active_idx] = Some(Rc::new((new_chunk, (0, new_mesh.upload(device)))));
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        // Normal case: get mutable reference to existing non-shared chunk
         if let Some((active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord) {
-
-            let block_coord = world_coord.to_block_coord();
 
             if active_chunk.set_block(&block_coord, block, overwrite) {
                 
