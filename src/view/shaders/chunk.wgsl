@@ -44,11 +44,11 @@ fn vs_main(in: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let base_color = vec3<f32>(in.color.x, in.color.y, in.color.z);
+    let base_color = in.color.xyz;
     let normal = normalize(in.normal);
     
-    // Reconstruct sun direction from individual components
-    let sun_dir = normalize(vec3<f32>(lighting.sun_dir_x, lighting.sun_dir_y, lighting.sun_dir_z));
+    // Reconstruct sun direction from individual components (already normalized on CPU)
+    let sun_dir = vec3<f32>(lighting.sun_dir_x, lighting.sun_dir_y, lighting.sun_dir_z);
     
     // Detect cloud blocks by their near-white color (0.95, 0.95, 0.95)
     let is_cloud = step(0.9, min(min(base_color.r, base_color.g), base_color.b));
@@ -94,15 +94,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Distance fog creates depth perception, height fog adds atmosphere
     let haze_color = vec3<f32>(0.75, 0.82, 0.92); // Warm blue-gray haze
     
-    // Distance from camera (horizontal plane)
+    // Squared distance from camera (horizontal plane) - avoids expensive sqrt
     let dx = in.world_pos.x - lighting.eye_x;
     let dz = in.world_pos.z - lighting.eye_z;
-    let dist = sqrt(dx * dx + dz * dz);
+    let dist_sq = dx * dx + dz * dz;
     
-    // Distance fog - increases with distance from camera
-    let fog_near = 200.0;   // Start fading at this distance
-    let fog_far = 500.0;   // Fully fogged at this distance
-    let dist_fog = smoothstep(fog_near, fog_far, dist);
+    // Distance fog - increases with distance from camera (using squared distances)
+    let fog_near_sq = 40000.0;   // 200^2 - Start fading at this distance
+    let fog_far_sq = 250000.0;   // 500^2 - Fully fogged at this distance
+    let dist_fog = smoothstep(fog_near_sq, fog_far_sq, dist_sq);
     
     // Height fog - lower areas have more haze
     let height_fog = 1.0 - smoothstep(0.0, 140.0, in.world_pos.y);

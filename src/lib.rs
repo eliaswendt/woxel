@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use glam::Vec3;
 
 use controller::{GameState, CameraController, CameraUniform, LightingUniform, TransformUniform, InputState, FrameLoopContext, PhysicsSystem, InputProcessor};
-use model::{Camera, Scene};
+use model::{Camera, Scene, CHUNK_SIZE};
 use view::render;
 #[cfg(target_arch = "wasm32")]
 use view::GpuContext;
@@ -197,6 +197,7 @@ async fn setup_app(
                 &dv,
                 &cam_bg,
                 &outline_bg,
+                CHUNK_SIZE as f32,
             );
         }
     });
