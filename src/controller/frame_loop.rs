@@ -74,6 +74,10 @@ impl FrameLoopContext {
         *last = now;
         drop(last);
 
+        // Update click states from pressed states (convert held buttons to click pulses)
+        // Cooldown of 0.2 seconds between repeated clicks when holding button
+        self.input_state.borrow_mut().update_click_pulse(now / 1000.0, 0.2);
+
         // Consume look input before taking immutable borrow
         let (dx, dy) = self.input_state.borrow_mut().consume_look();
 

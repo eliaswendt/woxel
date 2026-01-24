@@ -137,9 +137,9 @@ impl WorldCoord {
     /// Convert to chunk index
     pub fn to_chunk_coord(&self) -> ChunkCoord {
         ChunkCoord(
-            self.0 / CHUNK_SIZE as isize,
-            self.1 / CHUNK_SIZE as isize,
-            self.2 / CHUNK_SIZE as isize,
+            self.0.div_euclid(CHUNK_SIZE as isize),
+            self.1.div_euclid(CHUNK_SIZE as isize),
+            self.2.div_euclid(CHUNK_SIZE as isize),
         )
     }
 

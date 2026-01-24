@@ -71,7 +71,8 @@ impl Camera {
             
             if is_solid(block_x, block_y, block_z) {
                 // Found a solid block
-                // Compute face normal by checking which axis was crossed most recently
+                // Compute face normal: the direction pointing OUT from the solid block toward the ray origin
+                // This is the opposite of the ray travel direction
                 let (prev_x, prev_y, prev_z) = last_air_block;
                 
                 // Determine which axis changed and use that as the normal
@@ -80,18 +81,19 @@ impl Camera {
                 let dy = (block_y - prev_y).abs();
                 let dz = (block_z - prev_z).abs();
                 
+                // Face normal points from solid block toward the air block (opposite of ray direction)
                 let face_normal = if dx > 0 && dx >= dy && dx >= dz {
-                    ((block_x - prev_x).signum(), 0, 0)
+                    (-(block_x - prev_x).signum(), 0, 0)
                 } else if dy > 0 && dy >= dx && dy >= dz {
-                    (0, (block_y - prev_y).signum(), 0)
+                    (0, -(block_y - prev_y).signum(), 0)
                 } else if dz > 0 {
-                    (0, 0, (block_z - prev_z).signum())
+                    (0, 0, -(block_z - prev_z).signum())
                 } else {
                     // Fallback: use simple coordinate change detection
                     (
-                        if block_x != prev_x { (block_x - prev_x).signum() } else { 0 },
-                        if block_y != prev_y { (block_y - prev_y).signum() } else { 0 },
-                        if block_z != prev_z { (block_z - prev_z).signum() } else { 0 },
+                        if block_x != prev_x { -(block_x - prev_x).signum() } else { 0 },
+                        if block_y != prev_y { -(block_y - prev_y).signum() } else { 0 },
+                        if block_z != prev_z { -(block_z - prev_z).signum() } else { 0 },
                     )
                 };
                 
