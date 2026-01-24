@@ -9,12 +9,6 @@ const LOD_LEVELS: usize = CHUNK_SIZE.ilog2() as usize + 1; // e.g., 16 -> 5 leve
 #[derive(Clone)]
 pub struct Chunk {
     blocks: [Block; N_BLOCKS_PER_CHUNK],
-    
-    /// stores precomputed meshes for different LOD levels
-    meshes: [Option<Mesh>; LOD_LEVELS],
-
-    // tracks number of blocks that are Block::Empty (optimization for skipping empty chunks)
-    n_empty_blocks: usize,
 }
 
 impl Chunk {
@@ -22,9 +16,7 @@ impl Chunk {
     /// creates a new empty chunk
     pub fn new_empty() -> Self {
         Self {
-            blocks: [Block::Empty; N_BLOCKS_PER_CHUNK],
-            meshes: Default::default(),
-            n_empty_blocks: N_BLOCKS_PER_CHUNK,
+            blocks: [Block::Empty; N_BLOCKS_PER_CHUNK]
         }
     }
 
@@ -51,9 +43,7 @@ impl Chunk {
 
     pub fn with_blocks(blocks: [Block; N_BLOCKS_PER_CHUNK]) -> Self {
         Self {
-            blocks,
-            meshes: Default::default(),
-            n_empty_blocks: blocks.iter().filter(|b| b.is_empty()).count(),
+            blocks
         }
     }
 
@@ -158,7 +148,12 @@ impl Chunk {
 
 
     pub fn is_empty(&self) -> bool {
-        self.n_empty_blocks == N_BLOCKS_PER_CHUNK
+        for b in self.blocks.iter() {
+            if !b.is_empty() {
+                return false;
+            }
+        }
+        true
     }
 
 
@@ -166,24 +161,14 @@ impl Chunk {
         self.blocks[coord.get_block_idx()]
     }
     
-
+    #[inline]
     pub fn set_block(&mut self, coord: &BlockCoord, new: Block, overwrite: bool) -> bool {
         
         let target = &mut self.blocks[coord.get_block_idx()];
         
         if target.is_empty() || overwrite {
 
-            // keep track of empty blocks count
-            if target.is_empty() && !new.is_empty() {
-                self.n_empty_blocks -= 1;
-            } else if !target.is_empty() && new.is_empty() {
-                self.n_empty_blocks += 1;
-            }
-
             *target = new;
-
-            // invalidate meshes
-            self.meshes = Default::default();
 
             true
         } else { false }
@@ -191,19 +176,8 @@ impl Chunk {
 
     pub fn get_mesh(&mut self, lod: u8) -> Mesh {
 
-        if self.meshes[lod as usize].is_none() {
-
-            self.meshes[lod as usize] = if lod == 0 {
-                // if lod 0, use original blocks
-                Some(compute_mesh(&self.blocks))
-            } else {
-                let downsampled = self.compute_downsampled(lod);
-                Some(compute_mesh(&downsampled.blocks))
-            }
-        };
-
-
-        self.meshes[lod as usize].as_ref().unwrap().clone()
+        let downsampled = self.compute_downsampled(lod);
+        compute_mesh(&downsampled.blocks)
     }
 
 
@@ -213,7 +187,9 @@ impl Chunk {
     /// This allows greedy meshing to recognize merged surfaces across the downsampled region.
     pub fn compute_downsampled(&self, lod: u8) -> Chunk {
         
-        assert_ne!(lod, 0, "LOD 0 is the original chunk");
+        if lod == 0 {
+            return self.clone(); // LOD 0 is original chunk
+        }
 
         let mut downsampled_chunk = Chunk::new_empty();
 
@@ -262,6 +238,11 @@ impl Chunk {
                         Block::Empty
                     };
                     
+                    // Skip filling if chosen block is empty (chunk already initialized empty)
+                    if chosen == Block::Empty {
+                        continue;
+                    }
+
                     // Fill all blocks in this window with the chosen type
                     for oz in 0..window_size {
                         for oy in 0..window_size {
