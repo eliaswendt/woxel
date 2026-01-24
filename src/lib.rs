@@ -108,7 +108,7 @@ async fn setup_app(
     }));
 
     // World and game state
-    let core = Rc::new(RefCell::new(Scene::new([128, 64, 128], gpu.device.as_ref())));
+    let core = Rc::new(RefCell::new(Scene::new([100, 100, 100], gpu.device.as_ref())));
     let raycast_target: Rc<RefCell<Option<(i32, i32, i32)>>> = Rc::new(RefCell::new(None));
     let game_state = Rc::new(RefCell::new(GameState::new()));
     let input_state = Rc::new(RefCell::new(InputState::new()));
@@ -355,8 +355,8 @@ fn setup_input_listeners(
         let mousedown = Closure::wrap(Box::new(move |e: MouseEvent| {
             let button = e.button();
             match button {
-                0 => input_state.borrow_mut().left_click = true,   // Left click
-                2 => input_state.borrow_mut().right_click = true,  // Right click
+                0 => input_state.borrow_mut().left_click_pressed = true,   // Left click
+                2 => input_state.borrow_mut().right_click_pressed = true,  // Right click
                 _ => {},
             }
             e.prevent_default();
@@ -365,13 +365,13 @@ fn setup_input_listeners(
         mousedown.forget();
     }
 
-    // Mouse up - clear clicks
+    // Mouse up - clear click pressed state
     {
         let input_state = input_state.clone();
         let mouseup = Closure::wrap(Box::new(move |_e: MouseEvent| {
             let mut state = input_state.borrow_mut();
-            state.left_click = false;
-            state.right_click = false;
+            state.left_click_pressed = false;
+            state.right_click_pressed = false;
         }) as Box<dyn FnMut(MouseEvent)>);
         document.add_event_listener_with_callback("mouseup", mouseup.as_ref().unchecked_ref())?;
         mouseup.forget();

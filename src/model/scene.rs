@@ -154,6 +154,7 @@ impl Scene {
         }
     }
 
+    // gets called in each frame to update loaded chunks
     pub fn update(&mut self, player: &WorldCoord, device: &wgpu::Device, compute_budget: usize) {
 
         let mut used_compute_budget = 0;
@@ -240,7 +241,7 @@ impl Scene {
             player_chunk_coord.2 - self.previous_player_chunk_coord.2,
         ];
 
-        // process each axis independently
+        // process each axis movement independently
         for (axis, movement_delta) in deltas.iter().enumerate() {
 
             // store direction of movement (+1 or -1)
@@ -277,9 +278,9 @@ impl Scene {
                             1 => {
                                 // Y-axis: clear xz-plane
                                 ChunkCoord(
-                                    prev_base.0 + i - half,
+                                    prev_base.0 + j - half,
                                     prev_base.1 + plane_offset,
-                                    prev_base.2 + j - half,
+                                    prev_base.2 + i - half,
                                 )
                             }
                             _ => {
