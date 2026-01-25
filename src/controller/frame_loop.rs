@@ -46,7 +46,7 @@ pub struct LightingUniform {
     pub sun_dir: [f32; 3],
     pub sun_intensity: f32,
     pub ambient: f32,
-    pub _pad1: f32,
+    pub time: f32,  // Elapsed time in seconds for animations
     pub eye_pos: [f32; 2],  // x, z of camera (y not needed for horizontal distance fog)
 }
 
@@ -152,15 +152,26 @@ impl FrameLoopContext {
             self.cam.borrow().view_proj().to_cols_array_2d();
         queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&*self.cam_buf_data.borrow()));
 
-        // Update sun position relative to player
+        // Animate sun position - full day cycle every 120 seconds
+        let time_secs = (now / 1000.0) as f32;
+        let day_cycle = std::f32::consts::TAU / 120.0;  // Full rotation in 120s
+        let sun_angle = time_secs * day_cycle;
+        
+        // Sun orbits in the sky: rises in east, sets in west
+        // Y component: peaks at noon (angle=0), lowest at midnight (angle=PI)
+        // X component: east-west movement
+        let sun_dir = glam::Vec3::new(
+            sun_angle.sin(),                          // East-West
+            sun_angle.cos().max(0.1),                 // Up-Down (clamped so sun doesn't go below horizon)
+            0.3,                                       // Slight north offset for angled shadows
+        ).normalize();
+        
         let player_eye = self.cam.borrow().eye;
-        let sun_offset = glam::Vec3::new(50.0, 100.0, 50.0);
-        let sun_pos = player_eye + sun_offset;
-        let sun_dir = (sun_pos - player_eye).normalize();
         {
             let mut lighting = self.lighting_buf_data.borrow_mut();
             lighting.sun_dir = [sun_dir.x, sun_dir.y, sun_dir.z];
             lighting.eye_pos = [player_eye.x, player_eye.z];
+            lighting.time = time_secs;
         }
         queue.write_buffer(&self.lighting_buf, 0, bytemuck::bytes_of(&*self.lighting_buf_data.borrow()));
 

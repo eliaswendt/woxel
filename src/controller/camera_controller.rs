@@ -59,7 +59,7 @@ pub struct CameraController {
 impl CameraController {
     pub fn new() -> Self {
         Self {
-            move_speed: 10.0,
+            move_speed: 25.0,
             mouse_sensitivity: 0.002,
         }
     }

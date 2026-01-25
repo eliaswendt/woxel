@@ -8,7 +8,7 @@ struct Lighting {
     sun_dir_z: f32,
     sun_intensity: f32,
     ambient: f32,
-    _pad1: f32,
+    time: f32,
     eye_x: f32,
     eye_z: f32,
 };
@@ -52,16 +52,45 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Reconstruct sun direction from individual components
     let sun_dir = normalize(vec3<f32>(lighting.sun_dir_x, lighting.sun_dir_y, lighting.sun_dir_z));
     
-    // Detect cloud blocks by their near-white color (0.95, 0.95, 0.95)
-    let is_cloud = step(0.9, min(min(base_color.r, base_color.g), base_color.b));
+    
+    // === PER-BLOCK COLOR VARIATION ===
+    // Add subtle random color shifts based on world position for organic look
+    let block_pos = floor(in.world_pos);
+    let hash1 = fract(sin(dot(block_pos.xz, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    let hash2 = fract(sin(dot(block_pos.xz + vec2<f32>(1.0, 0.0), vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    
+    // Vary brightness and hue slightly per block
+    let brightness_var = mix(0.96, 1.08, hash1);  // ±4% brightness
+    let hue_shift = (hash2 - 0.5) * 0.05;         // ±1.5% hue
+    var varied_color = base_color * brightness_var;
+    // Subtle hue variation (warm/cool shift)
+    varied_color.r += hue_shift;
+    varied_color.b -= hue_shift;
     
     // === FACE-BASED AMBIENT OCCLUSION ===
     // Top faces (+Y) are brightest, bottom faces (-Y) are darkest, sides are medium
-    // Clouds get minimal AO (they're fluffy and lit from all sides)
     let ao_top = 1.0;
-    let ao_side = mix(0.85, 0.98, is_cloud);
-    let ao_bottom = mix(0.65, 0.92, is_cloud);
+    let ao_side = 0.82;
+    let ao_bottom = 0.6;
     let face_ao = mix(ao_side, mix(ao_bottom, ao_top, max(normal.y, 0.0)), abs(normal.y));
+    
+    // === EDGE DARKENING (PSEUDO-AO) ===
+    // Darken areas near block edges for more depth
+    let frac_pos = fract(in.world_pos);
+    // Distance from center of face (0 at center, 1 at edges)
+    let edge_x = 1.0 - 4.0 * frac_pos.x * (1.0 - frac_pos.x);
+    let edge_y = 1.0 - 4.0 * frac_pos.y * (1.0 - frac_pos.y);
+    let edge_z = 1.0 - 4.0 * frac_pos.z * (1.0 - frac_pos.z);
+    // Use edges perpendicular to the face normal
+    var edge_factor: f32;
+    if abs(normal.y) > 0.5 {
+        edge_factor = max(edge_x, edge_z);
+    } else if abs(normal.x) > 0.5 {
+        edge_factor = max(edge_y, edge_z);
+    } else {
+        edge_factor = max(edge_x, edge_y);
+    }
+    let edge_ao = mix(1.0, 0.88, edge_factor * edge_factor);
     
     // === SUN LIGHTING ===
     // Warm sunlight with soft falloff
@@ -90,27 +119,33 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     let specular = (spec_strength + fresnel) * sun_color * lighting.sun_intensity;
     
-    // === SKY LIGHT ===
-    // Warm blue fill light from above (hemisphere lighting)
+    // === SKY LIGHT (Hemisphere) ===
+    // Warm blue fill light from above
     let sky_factor = (normal.y + 1.0) * 0.5; // 0 at bottom, 1 at top
-    let sky_color = vec3<f32>(0.55, 0.7, 0.9); // Warm sky blue (less saturated, hint of warmth)
-    let sky_light = sky_factor * 0.3 * sky_color;
+    let sky_color = vec3<f32>(0.55, 0.7, 0.9); // Warm sky blue
+    let sky_light = sky_factor * 0.32 * sky_color;
     
     // === GROUND BOUNCE ===
     // Subtle warm bounce light from below
     let ground_factor = (-normal.y + 1.0) * 0.5; // 0 at top, 1 at bottom
     let ground_color = vec3<f32>(0.45, 0.38, 0.28); // Warm earth tones
-    let ground_light = ground_factor * 0.12 * ground_color;
+    let ground_light = ground_factor * 0.14 * ground_color;
+    
+    // === HEIGHT-BASED COLOR SHIFT ===
+    // Higher areas get slightly cooler/bluer tint, lower areas warmer
+    let height_norm = clamp((in.world_pos.y - 30.0) / 100.0, 0.0, 1.0);
+    let height_tint = mix(vec3<f32>(1.02, 1.0, 0.96), vec3<f32>(0.97, 0.98, 1.03), height_norm);
     
     // === COMBINE LIGHTING ===
     let ambient_color = vec3<f32>(1.0, 0.98, 0.95); // Slightly warm ambient
     let ambient_light = lighting.ambient * ambient_color;
     
-    // Total illumination
-    let total_light = (ambient_light + sun_light + sky_light + ground_light) * face_ao;
+    // Total illumination with edge and face AO
+    let total_ao = face_ao * edge_ao;
+    let total_light = (ambient_light + sun_light + sky_light + ground_light) * total_ao;
     
-    // Apply lighting to base color, then add specular on top
-    var lit_color = base_color * total_light + specular;
+    // Apply lighting to varied base color with height tint, then add specular
+    var lit_color = varied_color * height_tint * total_light + specular;
     
     // === DISTANCE + HEIGHT ATMOSPHERIC HAZE ===
     // Distance fog creates depth perception, height fog adds atmosphere
@@ -138,7 +173,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // === SATURATION BOOST ===
     // Slightly boost color saturation for vibrancy
     let luminance = dot(lit_color, vec3<f32>(0.299, 0.587, 0.114));
-    let saturation_boost = 1.15;
+    let saturation_boost = 1.18;
     lit_color = mix(vec3<f32>(luminance), lit_color, saturation_boost);
     
     // Clamp to valid range

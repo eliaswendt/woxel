@@ -121,7 +121,7 @@ impl App {
             sun_dir: [0.4, 0.8, 0.3],  // Slight angle for interesting shadows
             sun_intensity: 0.7,         // Strong directional light
             ambient: 0.35,              // Lower ambient for more contrast
-            _pad1: 0.0,
+            time: 0.0,
             eye_pos: [0.0, 0.0],        // Updated each frame
         };
         queue.write_buffer(&lighting_buffer, 0, bytemuck::bytes_of(&lighting_buf_data));
