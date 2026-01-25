@@ -7,6 +7,9 @@ use super::world::VoxelDensityGenerator;
 
 
 fn select_lod(distance_to_player: usize) -> LOD {
+    // TODO: make these distances configurable
+    return 0;
+
     if distance_to_player < 20 {
         0  // Full resolution
     } else if distance_to_player < 40 {
@@ -143,7 +146,7 @@ impl Scene {
                 // Replace empty chunk with a new unique chunk containing the new block
                 let mut new_chunk = Chunk::new_empty();
                 if new_chunk.set_block(&block_coord, block, overwrite) {
-                    let mut new_mesh = new_chunk.get_mesh(0);
+                    let mut new_mesh = new_chunk.compute_mesh(0);
                     new_mesh.offset_vertices_by(&chunk_coord);
                     self.active[active_idx] = Some(Rc::new((chunk_coord, new_chunk, (0, new_mesh.upload(device)))));
                     return true;
@@ -158,7 +161,7 @@ impl Scene {
             if active_chunk.set_block(&block_coord, block, overwrite) {
                 
                 // upload new mesh to GPU
-                let mut new_mesh = active_chunk.get_mesh(*active_lod);
+                let mut new_mesh = active_chunk.compute_mesh(*active_lod);
                 new_mesh.offset_vertices_by(&chunk_coord);
                 *active_mesh_buffer = new_mesh.upload(device);
 
@@ -213,7 +216,7 @@ impl Scene {
                 if !active_chunk.is_empty() && *active_lod != required_lod {
                     // println!("Updating LOD for Chunk {:?} from {} to {}", chunk_coord, *active_lod, required_lod);
 
-                    let mut new_mesh = active_chunk.get_mesh(required_lod);
+                    let mut new_mesh = active_chunk.compute_mesh(required_lod);
                     new_mesh.offset_vertices_by(&chunk_coord);
                     used_compute_budget += 1;
 
@@ -223,7 +226,7 @@ impl Scene {
             } else {
                 // log_1(&format!("self.active at {:?} is None", chunk_coord).into());
                 // chunk is missing -> generate and mesh it
-                let mut new_chunk = Chunk::new_polulated(&self.density_generator, &chunk_coord);
+                let new_chunk = Chunk::new_polulated(&self.density_generator, &chunk_coord);
                 // let mut new_chunk = Chunk::new_flat(&chunk_coord, Block::Grass);
 
                 // now check whether the new chunk is empty
@@ -237,8 +240,8 @@ impl Scene {
                     Some(self.empty_entry.clone())
                 } else {
                     // log_1(&format!("Loading Chunk {:?} at LOD {}", chunk_coord, required_lod).into());
-                    used_compute_budget += 2;
-                    let mut new_mesh = new_chunk.get_mesh(required_lod);
+                    used_compute_budget += 5;
+                    let mut new_mesh = new_chunk.compute_mesh(required_lod);
                     new_mesh.offset_vertices_by(&chunk_coord);
 
                     Some(Rc::new((chunk_coord, new_chunk, (required_lod, new_mesh.upload(device)))))

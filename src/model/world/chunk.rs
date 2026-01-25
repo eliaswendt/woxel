@@ -6,9 +6,12 @@ use super::block::{Block, face_dir_to_normal};
 pub const CHUNK_SIZE: isize = 16;
 const N_BLOCKS_PER_CHUNK: usize = CHUNK_SIZE.pow(3) as usize;
 const LOD_LEVELS: usize = CHUNK_SIZE.ilog2() as usize + 1; // e.g., 16 -> 5 levels (0-4)
+
 #[derive(Clone)]
 pub struct Chunk {
     blocks: [Block; N_BLOCKS_PER_CHUNK],
+    /// Count of non-empty blocks for O(1) is_empty() check
+    non_empty_count: u16,
 }
 
 impl Chunk {
@@ -16,7 +19,8 @@ impl Chunk {
     /// creates a new empty chunk
     pub fn new_empty() -> Self {
         Self {
-            blocks: [Block::Empty; N_BLOCKS_PER_CHUNK]
+            blocks: [Block::Empty; N_BLOCKS_PER_CHUNK],
+            non_empty_count: 0,
         }
     }
 
@@ -42,8 +46,10 @@ impl Chunk {
     }
 
     pub fn with_blocks(blocks: [Block; N_BLOCKS_PER_CHUNK]) -> Self {
+        let non_empty_count = blocks.iter().filter(|b| !b.is_empty()).count() as u16;
         Self {
-            blocks
+            blocks,
+            non_empty_count,
         }
     }
 
@@ -147,13 +153,9 @@ impl Chunk {
     }
 
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        for b in self.blocks.iter() {
-            if !b.is_empty() {
-                return false;
-            }
-        }
-        true
+        self.non_empty_count == 0
     }
 
 
@@ -163,312 +165,313 @@ impl Chunk {
     
     #[inline]
     pub fn set_block(&mut self, coord: &BlockCoord, new: Block, overwrite: bool) -> bool {
+        let idx = coord.get_block_idx();
+        let old = self.blocks[idx];
         
-        let target = &mut self.blocks[coord.get_block_idx()];
-        
-        if target.is_empty() || overwrite {
-
-            *target = new;
-
-            true
-        } else { false }
-    }
-
-    pub fn get_mesh(&mut self, lod: u8) -> Mesh {
-
-        let downsampled = self.compute_downsampled(lod);
-        compute_mesh(&downsampled.blocks)
-    }
-
-
-    /// Compute a subsampled version of this chunk for the given LOD level
-    /// Strategy: for each window_size^3 cell, pick the modal block (ignoring air so surface wins),
-    /// then fill ALL blocks in that cell with the chosen block type.
-    /// This allows greedy meshing to recognize merged surfaces across the downsampled region.
-    pub fn compute_downsampled(&self, lod: u8) -> Chunk {
-        
-        if lod == 0 {
-            return self.clone(); // LOD 0 is original chunk
-        }
-
-        let mut downsampled_chunk = Chunk::new_empty();
-
-        let window_size = 1 << lod; // 2^lod
-
-        // Downsampled chunk size
-        let lod_size = CHUNK_SIZE / window_size;
+        if old.is_empty() || overwrite {
+            // Update counter: track transitions between empty and non-empty
+            let old_empty = old.is_empty();
+            let new_empty = new.is_empty();
             
-        for z in 0..lod_size {
-            for y in 0..lod_size {
-                for x in 0..lod_size {
-                    // Pick the modal block inside this window_size^3 cell (ignore air so surface wins over empty)
-                    let mut block_counts = [0u32; 40]; // Updated for 40 block types (0-39)
-                    let mut any = false;
+            if old_empty && !new_empty {
+                self.non_empty_count += 1; // Adding a block
+            } else if !old_empty && new_empty {
+                self.non_empty_count -= 1; // Removing a block
+            }
+            
+            self.blocks[idx] = new;
+            true
+        } else { 
+            false 
+        }
+    }
 
-                    for oz in 0..window_size {
-                        for oy in 0..window_size {
-                            for ox in 0..window_size {
-                                let bx = x * window_size + ox;
-                                let by = y * window_size + oy;
-                                let bz = z * window_size + oz;
-                                let b = self.get_block(&BlockCoord(bx as usize, by as usize, bz as usize));
-                                if b != Block::Empty {
-                                    block_counts[b as usize] += 1;
-                                    any = true;
+
+    // Greedy meshing with face culling - merges adjacent faces of same block type
+    pub fn compute_mesh(&self, lod: u8) -> Mesh {
+
+        assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
+
+        let mut verts = Vec::new();
+        let mut idxs = Vec::new();
+        let mut index: u32 = 0;
+
+        // Process each of the 6 face directions
+        for dir in 0..6 {
+            // Determine axis and direction for this sweep
+            let (axis, back_face) = match dir {
+                0 => (0, false), // +X
+                1 => (0, true),  // -X
+                2 => (1, false), // +Y
+                3 => (1, true),  // -Y
+                4 => (2, false), // +Z
+                5 => (2, true),  // -Z
+                _ => unreachable!(),
+            };
+
+            // Dimensions for the 2D sweep plane (cubic, so all equal to s)
+            let (u_dim, v_dim, w_dim) = (CHUNK_SIZE as usize, CHUNK_SIZE as usize, CHUNK_SIZE as usize);
+
+            // Sweep through each slice along the axis
+            for w in 0..w_dim {
+                // Create a mask for this slice (stores block or air for culled)
+                let mut mask = vec![Block::Empty; (u_dim * v_dim) as usize];
+
+                // Fill mask with visible faces
+                for v in 0..v_dim {
+                    for u in 0..u_dim {
+                        // Convert u,v,w back to x,y,z based on axis
+                        let (x, y, z) = match axis {
+                            0 => (w, u, v),
+                            1 => (u, w, v),
+                            2 => (u, v, w),
+                            _ => unreachable!(),
+                        };
+
+                        let block = self.blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
+
+                        // Render water and solid blocks, skip air
+                        if block.is_empty() { continue; }
+
+                        // Check if face should be visible (face culling)
+                        let neighbor = if back_face {
+                            // Looking backward along axis
+                            if match axis {
+                                0 => x == 0,
+                                1 => y == 0,
+                                2 => z == 0,
+                                _ => unreachable!(),
+                            } {
+                                Block::Empty // Out of bounds = air
+                            } else {
+                                match axis {
+                                    0 => self.blocks[BlockCoord(x - 1, y, z).get_block_idx()],
+                                    1 => self.blocks[BlockCoord(x, y - 1, z).get_block_idx()],
+                                    2 => self.blocks[BlockCoord(x, y, z - 1).get_block_idx()],
+                                    _ => unreachable!(),
                                 }
                             }
-                        }
-                    }
-                    let chosen = if any {
-                        let mut best = Block::Empty;
-                        let mut highest_count = 0u32;
-                        for (b_idx, &c) in block_counts.iter().enumerate() {
-                            if c > highest_count {
-                                highest_count = c;
-                                best = Block::from_u8(b_idx as u8);
+                        } else {
+                            // Looking forward along axis
+                            if match axis {
+                                0 => x + 1 >= CHUNK_SIZE as usize,
+                                1 => y + 1 >= CHUNK_SIZE as usize,
+                                2 => z + 1 >= CHUNK_SIZE as usize,
+                                _ => unreachable!(),
+                            } {
+                                Block::Empty // Out of bounds = air
+                            } else {
+                                match axis {
+                                    0 => self.blocks[BlockCoord(x + 1, y, z).get_block_idx()],
+                                    1 => self.blocks[BlockCoord(x, y + 1, z).get_block_idx()],
+                                    2 => self.blocks[BlockCoord(x, y, z + 1).get_block_idx()],
+                                    _ => unreachable!(),
+                                }
                             }
-                        }
-                        best
-                    } else {
-                        Block::Empty
-                    };
-                    
-                    // Skip filling if chosen block is empty (chunk already initialized empty)
-                    if chosen == Block::Empty {
-                        continue;
-                    }
+                        };
 
-                    // Fill all blocks in this window with the chosen type
-                    for oz in 0..window_size {
-                        for oy in 0..window_size {
-                            for ox in 0..window_size {
-                                let bx = x * window_size + ox;
-                                let by = y * window_size + oy;
-                                let bz = z * window_size + oz;
-                                downsampled_chunk.set_block(&BlockCoord(bx as usize, by as usize, bz as usize), chosen, false);
+                        // Face is visible if neighbor is air or different material (e.g., water next to land)
+                        let should_render = neighbor == Block::Empty || 
+                                            (block == Block::Water && neighbor != Block::Water) ||
+                                            (block != Block::Water && neighbor == Block::Water);
+                        if should_render {
+                            mask[(u + v * u_dim) as usize] = block;
+                        }
+                    }
+                }
+
+                // Greedy meshing: merge adjacent faces into rectangles
+                for v in 0..v_dim {
+                    for u in 0..u_dim {
+                        let mask_idx = (u + v * u_dim) as usize;
+                        let block = mask[mask_idx];
+                        if block == Block::Empty { continue; }
+
+                        // Find width (u direction)
+                        let mut width = 1;
+                        while u + width < u_dim {
+                            let check_idx = (u + width + v * u_dim) as usize;
+                            if mask[check_idx] != block { break; }
+                            width += 1;
+                        }
+
+                        // Find height (v direction)
+                        let mut height = 1;
+                        'height_loop: while v + height < v_dim {
+                            for du in 0..width {
+                                let check_idx = (u + du + (v + height) * u_dim) as usize;
+                                if mask[check_idx] != block {
+                                    break 'height_loop;
+                                }
+                            }
+                            height += 1;
+                        }
+
+                        // Clear merged area from mask
+                        for dv in 0..height {
+                            for du in 0..width {
+                                let clear_idx = (u + du + (v + dv) * u_dim) as usize;
+                                mask[clear_idx] = Block::Empty;
                             }
                         }
+
+                        // Generate quad for this merged rectangle
+                        let face_dir = dir as u8;
+                        let color = block.color(face_dir);
+                        let normal = face_dir_to_normal(face_dir);
+
+                        // Generate quad vertices based on axis and dimensions
+                        // For each axis, we need to map (u,v,w) and (width,height) correctly
+                        let (p0, p1, p2, p3) = match axis {
+                            0 => { // X-axis: u=Y, v=Z, w=X
+                                let xf = if back_face { w as f32 } else { (w + 1) as f32 };
+                                if back_face {
+                                    (
+                                        [xf, u as f32, v as f32],
+                                        [xf, (u + width) as f32, v as f32],
+                                        [xf, (u + width) as f32, (v + height) as f32],
+                                        [xf, u as f32, (v + height) as f32],
+                                    )
+                                } else {
+                                    (
+                                        [xf, u as f32, (v + height) as f32],
+                                        [xf, (u + width) as f32, (v + height) as f32],
+                                        [xf, (u + width) as f32, v as f32],
+                                        [xf, u as f32, v as f32],
+                                    )
+                                }
+                            },
+                            1 => { // Y-axis: u=X, v=Z, w=Y
+                                let yf = if back_face { w as f32 } else { (w + 1) as f32 };
+                                if back_face {
+                                    (
+                                        [u as f32, yf, v as f32],
+                                        [u as f32, yf, (v + height) as f32],
+                                        [(u + width) as f32, yf, (v + height) as f32],
+                                        [(u + width) as f32, yf, v as f32],
+                                    )
+                                } else {
+                                    (
+                                        [(u + width) as f32, yf, v as f32],
+                                        [(u + width) as f32, yf, (v + height) as f32],
+                                        [u as f32, yf, (v + height) as f32],
+                                        [u as f32, yf, v as f32],
+                                    )
+                                }
+                            },
+                            2 => { // Z-axis: u=X, v=Y, w=Z
+                                let zf = if back_face { w as f32 } else { (w + 1) as f32 };
+                                if back_face {
+                                    (
+                                        [u as f32, v as f32, zf],
+                                        [(u + width) as f32, v as f32, zf],
+                                        [(u + width) as f32, (v + height) as f32, zf],
+                                        [u as f32, (v + height) as f32, zf],
+                                    )
+                                } else {
+                                    (
+                                        [(u + width) as f32, v as f32, zf],
+                                        [u as f32, v as f32, zf],
+                                        [u as f32, (v + height) as f32, zf],
+                                        [(u + width) as f32, (v + height) as f32, zf],
+                                    )
+                                }
+                            },
+                            _ => unreachable!(),
+                        };
+
+                        // UV coordinates scaled by quad size
+                        let uv_scale_u = width as f32;
+                        let uv_scale_v = height as f32;
+
+                        verts.push(Vertex { pos: p0, normal, color, uv: [0.0, 0.0] });
+                        verts.push(Vertex { pos: p1, normal, color, uv: [0.0, uv_scale_v] });
+                        verts.push(Vertex { pos: p2, normal, color, uv: [uv_scale_u, uv_scale_v] });
+                        verts.push(Vertex { pos: p3, normal, color, uv: [uv_scale_u, 0.0] });
+
+                        // Reverse winding order to match CCW front face
+                        idxs.extend_from_slice(&[index, index + 2, index + 1, index, index + 3, index + 2]);
+                        index += 4;
                     }
                 }
             }
         }
-        downsampled_chunk
+
+        Mesh { vertices: verts, indices: idxs }
     }
+
+    // /// Compute a subsampled version of this chunk for the given LOD level
+    // /// Strategy: for each window_size^3 cell, pick the modal block (ignoring air so surface wins),
+    // /// then fill ALL blocks in that cell with the chosen block type.
+    // /// This allows greedy meshing to recognize merged surfaces across the downsampled region.
+    // pub fn compute_downsampled(&self, lod: u8) -> Chunk {
+        
+    //     if lod == 0 {
+    //         return self.clone(); // LOD 0 is original chunk
+    //     }
+
+    //     let mut downsampled_chunk = Chunk::new_empty();
+
+    //     let window_size = 1 << lod; // 2^lod
+
+    //     // Downsampled chunk size
+    //     let lod_size = CHUNK_SIZE / window_size;
+            
+    //     for z in 0..lod_size {
+    //         for y in 0..lod_size {
+    //             for x in 0..lod_size {
+    //                 // Pick the modal block inside this window_size^3 cell (ignore air so surface wins over empty)
+    //                 let mut block_counts = [0u32; 40]; // Updated for 40 block types (0-39)
+    //                 let mut any = false;
+
+    //                 for oz in 0..window_size {
+    //                     for oy in 0..window_size {
+    //                         for ox in 0..window_size {
+    //                             let bx = x * window_size + ox;
+    //                             let by = y * window_size + oy;
+    //                             let bz = z * window_size + oz;
+    //                             let b = self.get_block(&BlockCoord(bx as usize, by as usize, bz as usize));
+    //                             if b != Block::Empty {
+    //                                 block_counts[b as usize] += 1;
+    //                                 any = true;
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //                 let chosen = if any {
+    //                     let mut best = Block::Empty;
+    //                     let mut highest_count = 0u32;
+    //                     for (b_idx, &c) in block_counts.iter().enumerate() {
+    //                         if c > highest_count {
+    //                             highest_count = c;
+    //                             best = Block::from_u8(b_idx as u8);
+    //                         }
+    //                     }
+    //                     best
+    //                 } else {
+    //                     Block::Empty
+    //                 };
+                    
+    //                 // Skip filling if chosen block is empty (chunk already initialized empty)
+    //                 if chosen == Block::Empty {
+    //                     continue;
+    //                 }
+
+    //                 // Fill all blocks in this window with the chosen type
+    //                 for oz in 0..window_size {
+    //                     for oy in 0..window_size {
+    //                         for ox in 0..window_size {
+    //                             let bx = x * window_size + ox;
+    //                             let by = y * window_size + oy;
+    //                             let bz = z * window_size + oz;
+    //                             downsampled_chunk.set_block(&BlockCoord(bx as usize, by as usize, bz as usize), chosen, false);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     downsampled_chunk
+    // }
     
 }
-
-
-
-
-
-// Greedy meshing with face culling - merges adjacent faces of same block type
-pub fn compute_mesh(blocks: &[Block; N_BLOCKS_PER_CHUNK]) -> Mesh {
-
-    let mut verts = Vec::new();
-    let mut idxs = Vec::new();
-    let mut index: u32 = 0;
-
-    // Process each of the 6 face directions
-    for dir in 0..6 {
-        // Determine axis and direction for this sweep
-        let (axis, back_face) = match dir {
-            0 => (0, false), // +X
-            1 => (0, true),  // -X
-            2 => (1, false), // +Y
-            3 => (1, true),  // -Y
-            4 => (2, false), // +Z
-            5 => (2, true),  // -Z
-            _ => unreachable!(),
-        };
-
-        // Dimensions for the 2D sweep plane (cubic, so all equal to s)
-        let (u_dim, v_dim, w_dim) = (CHUNK_SIZE as usize, CHUNK_SIZE as usize, CHUNK_SIZE as usize);
-
-        // Sweep through each slice along the axis
-        for w in 0..w_dim {
-            // Create a mask for this slice (stores block or air for culled)
-            let mut mask = vec![Block::Empty; (u_dim * v_dim) as usize];
-
-            // Fill mask with visible faces
-            for v in 0..v_dim {
-                for u in 0..u_dim {
-                    // Convert u,v,w back to x,y,z based on axis
-                    let (x, y, z) = match axis {
-                        0 => (w, u, v),
-                        1 => (u, w, v),
-                        2 => (u, v, w),
-                        _ => unreachable!(),
-                    };
-
-                    let block = blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
-
-                    // Render water and solid blocks, skip air
-                    if block.is_empty() { continue; }
-
-                    // Check if face should be visible (face culling)
-                    let neighbor = if back_face {
-                        // Looking backward along axis
-                        if match axis {
-                            0 => x == 0,
-                            1 => y == 0,
-                            2 => z == 0,
-                            _ => unreachable!(),
-                        } {
-                            Block::Empty // Out of bounds = air
-                        } else {
-                            match axis {
-                                0 => blocks[BlockCoord(x - 1, y, z).get_block_idx()],
-                                1 => blocks[BlockCoord(x, y - 1, z).get_block_idx()],
-                                2 => blocks[BlockCoord(x, y, z - 1).get_block_idx()],
-                                _ => unreachable!(),
-                            }
-                        }
-                    } else {
-                        // Looking forward along axis
-                        if match axis {
-                            0 => x + 1 >= CHUNK_SIZE as usize,
-                            1 => y + 1 >= CHUNK_SIZE as usize,
-                            2 => z + 1 >= CHUNK_SIZE as usize,
-                            _ => unreachable!(),
-                        } {
-                            Block::Empty // Out of bounds = air
-                        } else {
-                            match axis {
-                                0 => blocks[BlockCoord(x + 1, y, z).get_block_idx()],
-                                1 => blocks[BlockCoord(x, y + 1, z).get_block_idx()],
-                                2 => blocks[BlockCoord(x, y, z + 1).get_block_idx()],
-                                _ => unreachable!(),
-                            }
-                        }
-                    };
-
-                    // Face is visible if neighbor is air or different material (e.g., water next to land)
-                    let should_render = neighbor == Block::Empty || 
-                                        (block == Block::Water && neighbor != Block::Water) ||
-                                        (block != Block::Water && neighbor == Block::Water);
-                    if should_render {
-                        mask[(u + v * u_dim) as usize] = block;
-                    }
-                }
-            }
-
-            // Greedy meshing: merge adjacent faces into rectangles
-            for v in 0..v_dim {
-                for u in 0..u_dim {
-                    let mask_idx = (u + v * u_dim) as usize;
-                    let block = mask[mask_idx];
-                    if block == Block::Empty { continue; }
-
-                    // Find width (u direction)
-                    let mut width = 1;
-                    while u + width < u_dim {
-                        let check_idx = (u + width + v * u_dim) as usize;
-                        if mask[check_idx] != block { break; }
-                        width += 1;
-                    }
-
-                    // Find height (v direction)
-                    let mut height = 1;
-                    'height_loop: while v + height < v_dim {
-                        for du in 0..width {
-                            let check_idx = (u + du + (v + height) * u_dim) as usize;
-                            if mask[check_idx] != block {
-                                break 'height_loop;
-                            }
-                        }
-                        height += 1;
-                    }
-
-                    // Clear merged area from mask
-                    for dv in 0..height {
-                        for du in 0..width {
-                            let clear_idx = (u + du + (v + dv) * u_dim) as usize;
-                            mask[clear_idx] = Block::Empty;
-                        }
-                    }
-
-                    // Generate quad for this merged rectangle
-                    let face_dir = dir as u8;
-                    let color = block.color(face_dir);
-                    let normal = face_dir_to_normal(face_dir);
-
-                    // Generate quad vertices based on axis and dimensions
-                    // For each axis, we need to map (u,v,w) and (width,height) correctly
-                    let (p0, p1, p2, p3) = match axis {
-                        0 => { // X-axis: u=Y, v=Z, w=X
-                            let xf = if back_face { w as f32 } else { (w + 1) as f32 };
-                            if back_face {
-                                (
-                                    [xf, u as f32, v as f32],
-                                    [xf, (u + width) as f32, v as f32],
-                                    [xf, (u + width) as f32, (v + height) as f32],
-                                    [xf, u as f32, (v + height) as f32],
-                                )
-                            } else {
-                                (
-                                    [xf, u as f32, (v + height) as f32],
-                                    [xf, (u + width) as f32, (v + height) as f32],
-                                    [xf, (u + width) as f32, v as f32],
-                                    [xf, u as f32, v as f32],
-                                )
-                            }
-                        },
-                        1 => { // Y-axis: u=X, v=Z, w=Y
-                            let yf = if back_face { w as f32 } else { (w + 1) as f32 };
-                            if back_face {
-                                (
-                                    [u as f32, yf, v as f32],
-                                    [u as f32, yf, (v + height) as f32],
-                                    [(u + width) as f32, yf, (v + height) as f32],
-                                    [(u + width) as f32, yf, v as f32],
-                                )
-                            } else {
-                                (
-                                    [(u + width) as f32, yf, v as f32],
-                                    [(u + width) as f32, yf, (v + height) as f32],
-                                    [u as f32, yf, (v + height) as f32],
-                                    [u as f32, yf, v as f32],
-                                )
-                            }
-                        },
-                        2 => { // Z-axis: u=X, v=Y, w=Z
-                            let zf = if back_face { w as f32 } else { (w + 1) as f32 };
-                            if back_face {
-                                (
-                                    [u as f32, v as f32, zf],
-                                    [(u + width) as f32, v as f32, zf],
-                                    [(u + width) as f32, (v + height) as f32, zf],
-                                    [u as f32, (v + height) as f32, zf],
-                                )
-                            } else {
-                                (
-                                    [(u + width) as f32, v as f32, zf],
-                                    [u as f32, v as f32, zf],
-                                    [u as f32, (v + height) as f32, zf],
-                                    [(u + width) as f32, (v + height) as f32, zf],
-                                )
-                            }
-                        },
-                        _ => unreachable!(),
-                    };
-
-                    // UV coordinates scaled by quad size
-                    let uv_scale_u = width as f32;
-                    let uv_scale_v = height as f32;
-
-                    verts.push(Vertex { pos: p0, normal, color, uv: [0.0, 0.0] });
-                    verts.push(Vertex { pos: p1, normal, color, uv: [0.0, uv_scale_v] });
-                    verts.push(Vertex { pos: p2, normal, color, uv: [uv_scale_u, uv_scale_v] });
-                    verts.push(Vertex { pos: p3, normal, color, uv: [uv_scale_u, 0.0] });
-
-                    // Reverse winding order to match CCW front face
-                    idxs.extend_from_slice(&[index, index + 2, index + 1, index, index + 3, index + 2]);
-                    index += 4;
-                }
-            }
-        }
-    }
-
-    Mesh { vertices: verts, indices: idxs }
-}
-
