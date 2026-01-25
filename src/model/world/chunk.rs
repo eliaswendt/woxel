@@ -193,11 +193,6 @@ impl Chunk {
 
         let mut downsampled_chunk = Chunk::new_empty();
 
-        // return empty chunk if the original is empty
-        if self.is_empty() {
-            return downsampled_chunk;
-        }
-
         let window_size = 1 << lod; // 2^lod
 
         // Downsampled chunk size
