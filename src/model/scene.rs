@@ -172,7 +172,7 @@ impl Scene {
     }
 
     // gets called in each frame to update loaded chunks
-    pub fn update(&mut self, player: &WorldCoord, device: &wgpu::Device, compute_budget: usize) {
+    pub fn update(&mut self, player: &WorldCoord, device: &wgpu::Device, compute_budget: usize) -> usize {
 
         let mut used_compute_budget = 0;
 
@@ -249,6 +249,9 @@ impl Scene {
                 break;
             }
         }
+
+        // return used compute budget
+        used_compute_budget
     }
 
 

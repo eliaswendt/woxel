@@ -83,7 +83,7 @@ async fn setup_app(
 
     // Depth texture
     let depth_format = wgpu::TextureFormat::Depth32Float;
-    let (depth_tex, depth_view) = render::create_depth_texture(gpu.device.as_ref(), width, height);
+    let (_, depth_view) = render::create_depth_texture(gpu.device.as_ref(), width, height);
     let depth_view_cell: Rc<RefCell<wgpu::TextureView>> = Rc::new(RefCell::new(depth_view));
 
     // Create chunk pipelines

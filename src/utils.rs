@@ -1,4 +1,4 @@
-use crate::model::{CHUNK_SIZE, Chunk};
+use crate::model::CHUNK_SIZE;
 use wgpu::util::DeviceExt;
 use bytemuck::{NoUninit};
 

@@ -133,59 +133,6 @@ pub fn fbm_3d(x: f32, y: f32, z: f32, base_freq: f32, gain: f32, octaves: u32) -
     if max_amplitude > 0.0 { result / max_amplitude } else { 0.0 }
 }
 
-/// Ridge noise - creates sharp ridges by taking absolute value and inverting
-/// Used for mountain ridges and dramatic terrain features
-fn ridge_noise(x: f32, z: f32, freq: f32, octaves: u32) -> f32 {
-    let mut result = 0.0;
-    let mut amplitude = 1.0;
-    let mut frequency = freq;
-    let mut max_amplitude = 0.0;
-    
-    for _ in 0..octaves {
-        // Take absolute value and invert for ridge effect
-        let n = 1.0 - noise2d(x * frequency, z * frequency).abs();
-        result += n * n * amplitude; // Square for sharper ridges
-        max_amplitude += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    
-    if max_amplitude > 0.0 { result / max_amplitude } else { 0.0 }
-}
-
-/// Worm cave noise - creates long winding tunnels
-/// Uses two offset 3D noise samples to create tube-like structures
-fn worm_cave_noise(x: f32, y: f32, z: f32, freq: f32) -> f32 {
-    let n1 = fbm_3d(x, y, z, freq, 0.5, 3);
-    let n2 = fbm_3d(x + 100.0, y + 50.0, z - 100.0, freq, 0.5, 3);
-    
-    // Both noises must be near zero for a cave (intersection of two wavy surfaces)
-    let cave_value = (n1 * n1 + n2 * n2).sqrt();
-    cave_value
-}
-
-/// Cheese cave noise - creates large irregular caverns
-fn cheese_cave_noise(x: f32, y: f32, z: f32, freq: f32) -> f32 {
-    fbm_3d(x, y * 0.7, z, freq * 0.7, 0.6, 4)
-}
-
-/// Forest density noise - determines how dense trees should be in an area
-/// Returns value from 0.0 (no trees) to 1.0 (dense forest)
-fn forest_density_noise(x: f32, z: f32) -> f32 {
-    // Large scale forest patches
-    let large_scale = fbm(x, z, 0.008, 0.6, 4);
-    // Medium scale variation
-    let medium_scale = fbm(x + 500.0, z - 500.0, 0.025, 0.5, 3);
-    // Small scale for clearings
-    let small_scale = noise2d(x * 0.1, z * 0.1);
-    
-    // Combine scales - large determines forest vs plains, others add variation
-    let combined = large_scale * 0.6 + medium_scale * 0.3 + small_scale * 0.1;
-    
-    // Map to 0-1 range with bias towards forests in positive regions
-    ((combined + 0.5) * 1.2).clamp(0.0, 1.0)
-}
-
 // ============================================================================
 // BIOME TYPES AND TREE GENERATION
 // ============================================================================
@@ -729,7 +676,7 @@ impl VoxelDensityGenerator {
                         if !tree_data.should_spawn && plant_noise > self.config.plant_density {
                             let plant_type = match biome {
                                 BiomeType::Forest | BiomeType::Jungle => {
-                                    if plant_noise > 0.8 { Block::Grass_Tall } else { Block::Grass_Short }
+                                    if plant_noise > 0.8 { Block::GrassTall } else { Block::GrassShort }
                                 }
                                 BiomeType::Desert => {
                                     if plant_noise > 0.9 { Block::Cactus } else { Block::DeadBush }
@@ -1030,7 +977,7 @@ impl VoxelDensityGenerator {
                                 } else if flower_type_noise > -0.3 {
                                     Block::YellowFlower
                                 } else {
-                                    Block::Grass_Tall
+                                    Block::GrassTall
                                 };
                                 let fy = ly + 1;
                                 if fy >= 0 && fy < CHUNK_SIZE {
@@ -1084,7 +1031,6 @@ impl VoxelDensityGenerator {
     /// type: 0=Spruce, 1=Oak, 2=Birch, 3=Acacia
     fn place_fancy_tree(chunk: &mut super::chunk::Chunk, chunk_coord: &crate::utils::ChunkCoord, 
                         lx: isize, ly: isize, lz: isize, world_y: isize, tree_type: i32) {
-        use crate::utils::BlockCoord;
         
         // Random variation based on position
         let variation = ((world_y + lx * 7 + lz * 13) % 5) as i32;
@@ -1432,105 +1378,6 @@ impl VoxelDensityGenerator {
                 }
             }
         }
-    }
-
-    /// Check if a position should be a cave
-    /// Uses both worm caves (tunnels) and cheese caves (caverns)
-    fn check_cave(&self, x: f32, y: f32, z: f32, surface_height: f32) -> bool {
-        // No caves too close to surface
-        if y > surface_height - 6.0 {
-            return false;
-        }
-        
-        // Worm caves - long winding tunnels using 3D noise
-        let worm = worm_cave_noise(x, y, z, 0.02);
-        // Lower threshold = more caves
-        if worm < 0.12 {
-            return true;
-        }
-        
-        // Cheese caves - large irregular caverns
-        let cheese = cheese_cave_noise(x, y, z, 0.015);
-        // Cheese caves form where noise is in a specific range
-        if cheese > 0.55 && cheese < 0.75 && y < 50.0 {
-            return true;
-        }
-        
-        // Extra spaghetti caves for variety
-        let spaghetti1 = fbm_3d(x, y, z, 0.03, 0.5, 3);
-        let spaghetti2 = fbm_3d(x + 1000.0, y, z + 1000.0, 0.03, 0.5, 3);
-        if spaghetti1.abs() < 0.04 && spaghetti2.abs() < 0.04 && y < 60.0 {
-            return true;
-        }
-        
-        false
-    }
-
-    /// Calculate tree placement with forest clustering
-    fn calculate_tree_data_clustered(&self, wx: f32, wz: f32, forest_density: f32) -> TreeData {
-        // Determine biome at this location
-        let biome = self.get_biome_type(wx, wz, 30.0);
-        
-        // Tree placement noise - determines exact tree positions
-        let tree_pos_noise = noise2d(wx * 0.5 + 200.0, wz * 0.5 - 200.0);
-        
-        // Additional jitter for natural distribution
-        let jitter = noise2d(wx * 1.7, wz * 1.7) * 0.15;
-        
-        // Combined noise value
-        let tree_noise = tree_pos_noise + jitter;
-        
-        // Base threshold - lower = more trees
-        // Forest density shifts the threshold down (more trees in dense forest areas)
-        let base_threshold = match biome {
-            BiomeType::Forest => -0.1,   // Lots of trees
-            BiomeType::Jungle => -0.2,   // Even more trees
-            BiomeType::Tundra => 0.3,    // Some trees
-            BiomeType::Plain => 0.4,     // Scattered trees
-            BiomeType::Mountain => 0.5,  // Few trees
-            BiomeType::Desert => 0.9,    // Almost no trees
-            _ => 0.3,
-        };
-        
-        // Forest density can lower threshold by up to 0.4
-        let threshold = base_threshold - (forest_density * 0.4);
-        let should_spawn = tree_noise > threshold;
-        
-        // Determine tree type based on biome
-        let tree_rng = (noise2d(wx * 0.3 + 300.0, wz * 0.3 - 300.0) + 1.0) * 0.5;
-        
-        let tree_type = match biome {
-            BiomeType::Tundra => TreeType::Spruce,
-            BiomeType::Forest => {
-                if tree_rng > 0.7 { TreeType::Birch }
-                else if tree_rng > 0.3 { TreeType::Oak }
-                else { TreeType::Spruce }
-            }
-            BiomeType::Mountain => {
-                if tree_rng > 0.5 { TreeType::Spruce } else { TreeType::Oak }
-            }
-            BiomeType::Jungle => {
-                if tree_rng > 0.5 { TreeType::DarkOak } else { TreeType::Acacia }
-            }
-            BiomeType::Desert => TreeType::Acacia,
-            BiomeType::Plain => {
-                if tree_rng > 0.7 { TreeType::Birch } else { TreeType::Oak }
-            }
-            _ => TreeType::Oak,
-        };
-        
-        // Tree height varies by type and density
-        let height_bonus = (forest_density * 2.0) as i32;
-        let height_var = ((tree_rng * 6.0) as i32) - 2;
-        let tree_height = match tree_type {
-            TreeType::Spruce => 7 + height_bonus + height_var,
-            TreeType::Birch => 6 + height_bonus + height_var,
-            TreeType::Oak => 5 + height_bonus + height_var,
-            TreeType::Acacia => 5 + height_bonus + height_var,
-            TreeType::DarkOak => 9 + height_bonus + height_var,
-        }.max(4).min(14);
-        
-        TreeData { tree_type, tree_height, should_spawn }
     }
 
     /// Plant a tree of given type at specified location
