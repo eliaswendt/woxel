@@ -166,7 +166,7 @@ async fn setup_app(
         lighting_buf: lighting_buf.clone(),
         lighting_buf_data,
         depth_view_cell,
-        core,
+        scene: core,
         input_state,
         game_state,
         camera_controller: CameraController::new(),
@@ -187,7 +187,7 @@ async fn setup_app(
             frame_ctx.update(gpu.device.as_ref(), gpu.queue.as_ref(), &window_for_loop, &gpu.surface, &mut render_state);
             
             // Draw frame
-            let core_borrow = frame_ctx.core.borrow();
+            let core_borrow = frame_ctx.scene.borrow();
             let dv = frame_ctx.depth_view_cell.borrow();
             render_state.draw_frame(
                 gpu.device.as_ref(),

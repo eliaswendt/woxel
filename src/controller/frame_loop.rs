@@ -1,6 +1,5 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use web_sys::console::log_1;
 use wgpu::{Device, Queue, Surface, TextureView};
 use web_sys::Window;
 
@@ -80,13 +79,10 @@ impl FrameLoopContext {
         // Consume look input before taking immutable borrow
         let (dx, dy) = self.input_state.borrow_mut().consume_look();
 
-        // Extract input data in a minimal scope
-        let (pressed_keys, is_control) = {
+        // Extract is_control in a minimal scope
+        let is_control = {
             let input = self.input_state.borrow();
-            (
-                input.pressed_keys.clone(),
-                input.is_key_pressed("Control") || input.is_key_pressed("control"),
-            )
+            input.is_key_pressed("Control") || input.is_key_pressed("control")
         };
 
         let mut game_state = self.game_state.borrow_mut();
@@ -102,6 +98,8 @@ impl FrameLoopContext {
         }
 
         // Update camera position (WASD, Space, Shift always control camera)
+        // Re-borrow for pressed_keys access
+        let pressed_keys = self.input_state.borrow().pressed_keys.clone();
         self.camera_controller
             .update_movement(&mut cam, &pressed_keys, dt, is_control);
 
@@ -161,12 +159,15 @@ impl FrameLoopContext {
         queue.write_buffer(&self.lighting_buf, 0, bytemuck::bytes_of(&*self.lighting_buf_data.borrow()));
 
         // Raycast to find block under crosshair - use existing cam borrow
+        // Cache scene borrow outside closure to avoid repeated borrow() in hot loop
+        let scene_ref = self.scene.borrow();
         let raycast_result = cam.raycast(8.0, |x, y, z| {
-            match self.scene.borrow().get_block(&WorldCoord(x as isize, y as isize, z as isize)) {
+            match scene_ref.get_block(&WorldCoord(x as isize, y as isize, z as isize)) {
                 Some(b) => b.is_solid(),
                 None => false,
             }
         });
+        drop(scene_ref);
         
         // Release cam borrow before UI section
         drop(cam);
@@ -186,36 +187,25 @@ impl FrameLoopContext {
             // Handle block removal (left click) and placement (right click)
             let input = self.input_state.borrow();
             if input.left_click {
-                log_1(&format!("trying to remove block at ({}, {}, {})", bx, by, bz).into());
                 // Remove block: delete the hit block
-                if self.scene.borrow_mut().set_block(
+                let _ = self.scene.borrow_mut().set_block(
                     &WorldCoord(bx as isize, by as isize, bz as isize),
                     crate::model::Block::Empty,
                     true,
                     device
-                ) {
-                    log_1(&"removed block".into());
-                    // Successfully removed block, reload chunk
-                    // Calculate chunk world key: (chunk_index * chunk_size)
-
-                    // TODO: Implement mesh update for block changes
-                    // For now, the mesh will be regenerated when the player moves to a new chunk
-                }
+                );
             } else if input.right_click {
                 // Place block: calculate position adjacent to the raycast target using the face normal
                 let placement_x = bx + face_nx;
                 let placement_y = by + face_ny;
                 let placement_z = bz + face_nz;
                 
-                if self.scene.borrow_mut().set_block(
+                let _ = self.scene.borrow_mut().set_block(
                     &WorldCoord(placement_x as isize, placement_y as isize, placement_z as isize),
                     input.selected_block,
                     true,
                     device
-                ) {
-                    log_1(&format!("set block to {:?}", input.selected_block).into());
-                    // Successfully placed block
-                }
+                );
             }
             drop(input);
         } else {

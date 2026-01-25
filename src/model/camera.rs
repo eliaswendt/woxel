@@ -49,58 +49,80 @@ impl Camera {
     
     // DDA raycast to find block intersection
     // Returns (block_pos, face_normal) or None if no hit within max_distance
-    // Uses smaller step size for more accurate face normal detection
+    // Uses proper DDA algorithm for efficient grid traversal
     pub fn raycast<F>(&self, max_distance: f32, is_solid: F) -> Option<((i32, i32, i32), (i32, i32, i32))>
     where
         F: Fn(i32, i32, i32) -> bool,
     {
         let dir = self.forward();
-        let mut pos = self.eye;
+        let origin = self.eye;
         
-        let step_size = 0.05; // Smaller step for better accuracy
+        // Current voxel position
+        let mut x = origin.x.floor() as i32;
+        let mut y = origin.y.floor() as i32;
+        let mut z = origin.z.floor() as i32;
+        
+        // Direction signs
+        let step_x = if dir.x >= 0.0 { 1 } else { -1 };
+        let step_y = if dir.y >= 0.0 { 1 } else { -1 };
+        let step_z = if dir.z >= 0.0 { 1 } else { -1 };
+        
+        // How far along the ray we must move for each component to cross a voxel boundary
+        let t_delta_x = if dir.x.abs() < 1e-10 { f32::MAX } else { (1.0 / dir.x).abs() };
+        let t_delta_y = if dir.y.abs() < 1e-10 { f32::MAX } else { (1.0 / dir.y).abs() };
+        let t_delta_z = if dir.z.abs() < 1e-10 { f32::MAX } else { (1.0 / dir.z).abs() };
+        
+        // Distance to next voxel boundary
+        let mut t_max_x = if dir.x >= 0.0 {
+            ((x + 1) as f32 - origin.x) * t_delta_x
+        } else {
+            (origin.x - x as f32) * t_delta_x
+        };
+        let mut t_max_y = if dir.y >= 0.0 {
+            ((y + 1) as f32 - origin.y) * t_delta_y
+        } else {
+            (origin.y - y as f32) * t_delta_y
+        };
+        let mut t_max_z = if dir.z >= 0.0 {
+            ((z + 1) as f32 - origin.z) * t_delta_z
+        } else {
+            (origin.z - z as f32) * t_delta_z
+        };
+        
         let mut distance = 0.0;
-        let mut last_air_block = (pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+        let mut face_normal = (0, 0, 0);
         
         while distance < max_distance {
-            pos += dir * step_size;
-            distance += step_size;
-            
-            let block_x = pos.x.floor() as i32;
-            let block_y = pos.y.floor() as i32;
-            let block_z = pos.z.floor() as i32;
-            
-            if is_solid(block_x, block_y, block_z) {
-                // Found a solid block
-                // Compute face normal: the direction pointing OUT from the solid block toward the ray origin
-                // This is the opposite of the ray travel direction
-                let (prev_x, prev_y, prev_z) = last_air_block;
-                
-                // Determine which axis changed and use that as the normal
-                // If multiple axes changed (corner case), prioritize the one that changed most
-                let dx = (block_x - prev_x).abs();
-                let dy = (block_y - prev_y).abs();
-                let dz = (block_z - prev_z).abs();
-                
-                // Face normal points from solid block toward the air block (opposite of ray direction)
-                let face_normal = if dx > 0 && dx >= dy && dx >= dz {
-                    (-(block_x - prev_x).signum(), 0, 0)
-                } else if dy > 0 && dy >= dx && dy >= dz {
-                    (0, -(block_y - prev_y).signum(), 0)
-                } else if dz > 0 {
-                    (0, 0, -(block_z - prev_z).signum())
-                } else {
-                    // Fallback: use simple coordinate change detection
-                    (
-                        if block_x != prev_x { -(block_x - prev_x).signum() } else { 0 },
-                        if block_y != prev_y { -(block_y - prev_y).signum() } else { 0 },
-                        if block_z != prev_z { -(block_z - prev_z).signum() } else { 0 },
-                    )
-                };
-                
-                return Some(((block_x, block_y, block_z), face_normal));
+            if is_solid(x, y, z) {
+                return Some(((x, y, z), face_normal));
             }
             
-            last_air_block = (block_x, block_y, block_z);
+            // Move to next voxel boundary
+            if t_max_x < t_max_y {
+                if t_max_x < t_max_z {
+                    distance = t_max_x;
+                    t_max_x += t_delta_x;
+                    x += step_x;
+                    face_normal = (-step_x, 0, 0);
+                } else {
+                    distance = t_max_z;
+                    t_max_z += t_delta_z;
+                    z += step_z;
+                    face_normal = (0, 0, -step_z);
+                }
+            } else {
+                if t_max_y < t_max_z {
+                    distance = t_max_y;
+                    t_max_y += t_delta_y;
+                    y += step_y;
+                    face_normal = (0, -step_y, 0);
+                } else {
+                    distance = t_max_z;
+                    t_max_z += t_delta_z;
+                    z += step_z;
+                    face_normal = (0, 0, -step_z);
+                }
+            }
         }
         
         None
