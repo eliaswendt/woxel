@@ -73,8 +73,8 @@ async fn setup_app(
     // Lower ambient + higher sun = more contrast and depth
     let lighting_buf_data = Rc::new(RefCell::new(LightingUniform {
         sun_dir: [0.4, 0.8, 0.3],  // Slight angle for interesting shadows
-        sun_intensity: 0.7,         // Strong directional light
-        ambient: 0.3,              // Lower ambient for more contrast
+        sun_intensity: 0.8,         // Strong directional light
+        ambient: 0.1,              // Lower ambient for more contrast
         time: 0.0,
         eye_pos: [0.0, 0.0],        // Updated each frame
     }));
