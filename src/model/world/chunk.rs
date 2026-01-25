@@ -318,6 +318,7 @@ impl Chunk {
                         // Generate quad for this merged rectangle
                         let face_dir = dir as u8;
                         let color = block.color(face_dir);
+                        let roughness = block.roughness();
                         let normal = face_dir_to_normal(face_dir);
 
                         // Generate quad vertices based on axis and dimensions
@@ -380,14 +381,13 @@ impl Chunk {
                             _ => unreachable!(),
                         };
 
-                        // UV coordinates scaled by quad size
-                        let uv_scale_u = width as f32;
-                        let uv_scale_v = height as f32;
+                        // UV coordinates: x = roughness, y = quad scale for potential tiling
+                        let uv_scale = (width.max(height)) as f32;
 
-                        verts.push(Vertex { pos: p0, normal, color, uv: [0.0, 0.0] });
-                        verts.push(Vertex { pos: p1, normal, color, uv: [0.0, uv_scale_v] });
-                        verts.push(Vertex { pos: p2, normal, color, uv: [uv_scale_u, uv_scale_v] });
-                        verts.push(Vertex { pos: p3, normal, color, uv: [uv_scale_u, 0.0] });
+                        verts.push(Vertex { pos: p0, normal, color, uv: [roughness, uv_scale] });
+                        verts.push(Vertex { pos: p1, normal, color, uv: [roughness, uv_scale] });
+                        verts.push(Vertex { pos: p2, normal, color, uv: [roughness, uv_scale] });
+                        verts.push(Vertex { pos: p3, normal, color, uv: [roughness, uv_scale] });
 
                         // Reverse winding order to match CCW front face
                         idxs.extend_from_slice(&[index, index + 2, index + 1, index, index + 3, index + 2]);

@@ -30,6 +30,7 @@ struct VsOut {
     @location(0) color: vec4<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) world_pos: vec3<f32>,
+    @location(3) roughness: f32,
 };
 
 @vertex
@@ -39,16 +40,17 @@ fn vs_main(in: VsIn) -> VsOut {
     out.color = in.color;
     out.normal = in.normal;
     out.world_pos = in.pos;
+    out.roughness = in.uv.x;  // roughness stored in uv.x
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let base_color = in.color.xyz;
+    let base_color = vec3<f32>(in.color.x, in.color.y, in.color.z);
     let normal = normalize(in.normal);
     
-    // Reconstruct sun direction from individual components (already normalized on CPU)
-    let sun_dir = vec3<f32>(lighting.sun_dir_x, lighting.sun_dir_y, lighting.sun_dir_z);
+    // Reconstruct sun direction from individual components
+    let sun_dir = normalize(vec3<f32>(lighting.sun_dir_x, lighting.sun_dir_y, lighting.sun_dir_z));
     
     // Detect cloud blocks by their near-white color (0.95, 0.95, 0.95)
     let is_cloud = step(0.9, min(min(base_color.r, base_color.g), base_color.b));
@@ -67,6 +69,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sun_factor = smoothstep(-0.1, 1.0, sun_dot);
     let sun_color = vec3<f32>(1.0, 0.95, 0.85); // Warm white sunlight
     let sun_light = sun_factor * lighting.sun_intensity * sun_color;
+    
+    // === SPECULAR HIGHLIGHTS (glossy surfaces) ===
+    // Blinn-Phong style specular based on roughness
+    let roughness = in.roughness;
+    let smoothness = 1.0 - roughness;
+    
+    // View direction (from surface to camera)
+    let eye_y = 60.0; // Approximate camera height
+    let view_dir = normalize(vec3<f32>(lighting.eye_x - in.world_pos.x, eye_y - in.world_pos.y, lighting.eye_z - in.world_pos.z));
+    let half_vec = normalize(sun_dir + view_dir);
+    let spec_angle = max(dot(normal, half_vec), 0.0);
+    
+    // Specular power: smooth = sharp highlights, rough = broad/none
+    let spec_power = mix(4.0, 96.0, smoothness * smoothness);
+    let spec_strength = pow(spec_angle, spec_power) * smoothness * 0.8;
+    
+    // Subtle Fresnel effect - edges of glossy surfaces are slightly more reflective
+    let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), 4.0) * smoothness * 0.2;
+    
+    let specular = (spec_strength + fresnel) * sun_color * lighting.sun_intensity;
     
     // === SKY LIGHT ===
     // Warm blue fill light from above (hemisphere lighting)
@@ -87,22 +109,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Total illumination
     let total_light = (ambient_light + sun_light + sky_light + ground_light) * face_ao;
     
-    // Apply lighting to base color
-    var lit_color = base_color * total_light;
+    // Apply lighting to base color, then add specular on top
+    var lit_color = base_color * total_light + specular;
     
     // === DISTANCE + HEIGHT ATMOSPHERIC HAZE ===
     // Distance fog creates depth perception, height fog adds atmosphere
     let haze_color = vec3<f32>(0.75, 0.82, 0.92); // Warm blue-gray haze
     
-    // Squared distance from camera (horizontal plane) - avoids expensive sqrt
+    // Distance from camera (horizontal plane)
     let dx = in.world_pos.x - lighting.eye_x;
     let dz = in.world_pos.z - lighting.eye_z;
-    let dist_sq = dx * dx + dz * dz;
+    let dist = sqrt(dx * dx + dz * dz);
     
-    // Distance fog - increases with distance from camera (using squared distances)
-    let fog_near_sq = 40000.0;   // 200^2 - Start fading at this distance
-    let fog_far_sq = 250000.0;   // 500^2 - Fully fogged at this distance
-    let dist_fog = smoothstep(fog_near_sq, fog_far_sq, dist_sq);
+    // Distance fog - increases with distance from camera
+    let fog_near = 200.0;   // Start fading at this distance
+    let fog_far = 500.0;   // Fully fogged at this distance
+    let dist_fog = smoothstep(fog_near, fog_far, dist);
     
     // Height fog - lower areas have more haze
     let height_fog = 1.0 - smoothstep(0.0, 140.0, in.world_pos.y);

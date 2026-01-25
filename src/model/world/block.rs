@@ -106,6 +106,50 @@ impl Block {
         !matches!(self, Block::Empty | Block::Water | Block::Cloud)
     }
     
+    /// Returns surface roughness: 0.0 = glossy/smooth, 1.0 = rough/matte
+    pub fn roughness(self) -> f32 {
+        match self {
+            // Very glossy (wet/polished) - strong reflections!
+            Block::Ice => 0.02,
+            Block::Water | Block::LakeWater => 0.05,
+            Block::DiamondOre => 0.08,
+            
+            // Smooth/polished - visible shine
+            Block::GoldOre => 0.12,
+            Block::IronOre => 0.18,
+            Block::Snow => 0.2,
+            Block::Clay => 0.25,
+            Block::Bedrock => 0.28,
+            Block::Basalt => 0.3,
+            Block::BlackStone => 0.32,
+            
+            // Semi-smooth - subtle sheen
+            Block::Stone => 0.45,
+            Block::Cobblestone => 0.5,
+            Block::CoalOre => 0.4,
+            Block::Granite => 0.42,
+            Block::Sandstone => 0.55,
+            
+            // Medium rough
+            Block::Sand => 0.75,
+            Block::Gravel => 0.8,
+            Block::Dirt => 0.85,
+            Block::Wood | Block::SpruceWood | Block::BirchWood | Block::AcaciaWood | Block::DarkOakWood => 0.7,
+            Block::Cactus => 0.5,
+            
+            // Rough/organic - completely matte
+            Block::Grass => 0.92,
+            Block::Moss => 0.95,
+            Block::OakLeaves | Block::SpruceLeaves | Block::BirchLeaves | Block::AcaciaLeaves | Block::DarkOakLeaves => 0.98,
+            
+            // Very rough/fluffy
+            Block::Cloud => 1.0,
+            
+            // Default medium-rough
+            _ => 0.8,
+        }
+    }
+    
     pub fn color(self, face_dir: u8) -> [f32; 4] {
         match self {
             Block::Empty => [0.0, 0.0, 0.0, 1.0],
