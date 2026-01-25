@@ -3,7 +3,7 @@ use crate::utils::{ChunkCoord, BlockCoord, Mesh, Vertex};
 use super::block::{Block, face_dir_to_normal};
 
 
-pub const CHUNK_SIZE: isize = 16;
+pub const CHUNK_SIZE: isize = 32;
 const N_BLOCKS_PER_CHUNK: usize = CHUNK_SIZE.pow(3) as usize;
 const LOD_LEVELS: usize = CHUNK_SIZE.ilog2() as usize + 1; // e.g., 16 -> 5 levels (0-4)
 

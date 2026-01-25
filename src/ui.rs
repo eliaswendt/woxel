@@ -119,15 +119,15 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             
             ui.horizontal(|ui| {
                 ui.label("X:");
-                ui.add(egui::Slider::new(&mut rd[0], 4..=128).step_by(4.0));
+                ui.add(egui::Slider::new(&mut rd[0], 1..=64).step_by(1.0));
             });
             ui.horizontal(|ui| {
                 ui.label("Y:");
-                ui.add(egui::Slider::new(&mut rd[1], 4..=128).step_by(4.0));
+                ui.add(egui::Slider::new(&mut rd[1], 1..=64).step_by(1.0));
             });
             ui.horizontal(|ui| {
                 ui.label("Z:");
-                ui.add(egui::Slider::new(&mut rd[2], 4..=128).step_by(4.0));
+                ui.add(egui::Slider::new(&mut rd[2], 1..=64).step_by(1.0));
             });
             
             // Check if changed and update
@@ -137,7 +137,7 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             
             ui.separator();
             ui.label("Compute Budget");
-            ui.add(egui::Slider::new(&mut gs.compute_budget, 1..=500).step_by(10.0));
+            ui.add(egui::Slider::new(&mut gs.compute_budget, 0..=500).step_by(1.0));
             
             ui.separator();
             ui.horizontal(|ui| {
