@@ -157,15 +157,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let dist = sqrt(dx * dx + dz * dz);
     
     // Distance fog - increases with distance from camera
-    let fog_near = 200.0;   // Start fading at this distance
-    let fog_far = 500.0;   // Fully fogged at this distance
+    let fog_near = 0.0;   // Start fading at this distance
+    let fog_far = 1000.0;   // Fully fogged at this distance
     let dist_fog = smoothstep(fog_near, fog_far, dist);
     
     // Height fog - lower areas have more haze
     let height_fog = 1.0 - smoothstep(0.0, 140.0, in.world_pos.y);
     
     // Combine: distance fog is primary, height fog adds extra at low areas
-    let total_fog = dist_fog * 0.55 + height_fog * 0.12;
+    let total_fog = dist_fog * 0.40 + height_fog * 0.12;
     let fog_amount = clamp(total_fog, 0.0, 0.7); // Cap max fog
     
     lit_color = mix(lit_color, haze_color * (ambient_light.x + 0.35), fog_amount);
