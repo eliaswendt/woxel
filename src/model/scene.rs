@@ -198,9 +198,16 @@ impl Scene {
             ); 
             let active_idx = self.active_idx(&chunk_coord);
 
-            // TODO: temporary optimization: remove
-            if chunk_coord.1 <= -2 {
-                // do not load chunks below y=0
+            
+            // Skip chunks that are guaranteed to be empty (above terrain + some margin)
+            // Terrain max height is ~200, so chunks starting at y=224 (chunk 14) are air-only
+            // Exception: clouds at y=255 (chunk 15), but those are handled separately if needed
+            if chunk_coord.1 <= -2 || chunk_coord.1 >= 14 {
+                // These chunks are guaranteed empty - use the empty_entry directly
+                let active_idx = self.active_idx(&chunk_coord);
+                if self.active[active_idx].is_none() {
+                    self.active[active_idx] = Some(self.empty_entry.clone());
+                }
                 continue;
             }
 
