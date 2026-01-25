@@ -14,6 +14,8 @@ pub struct GameState {
     pub render_distance_changed: bool,
     // Compute budget for chunk meshing per frame
     pub compute_budget: u32,
+    // Day/night cycle duration in seconds (0 = disabled)
+    pub day_cycle_seconds: f32,
 }
 
 impl GameState {
@@ -28,6 +30,7 @@ impl GameState {
             render_distance: [52, 32, 52],
             render_distance_changed: false,
             compute_budget: 100,
+            day_cycle_seconds: 120.0,  // 2 minute day cycle by default
         }
     }
 

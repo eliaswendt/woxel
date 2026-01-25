@@ -138,6 +138,17 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             ui.separator();
             ui.label("Compute Budget");
             ui.add(egui::Slider::new(&mut gs.compute_budget, 1..=500).step_by(10.0));
+            
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Day Cycle");
+                ui.add(egui::Slider::new(&mut gs.day_cycle_seconds, 0.0..=600.0)
+                    .step_by(10.0)
+                    .suffix("s"));
+            });
+            if gs.day_cycle_seconds == 0.0 {
+                ui.label("(disabled - static sun)");
+            }
         });
 }
 

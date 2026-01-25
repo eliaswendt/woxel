@@ -152,10 +152,14 @@ impl FrameLoopContext {
             self.cam.borrow().view_proj().to_cols_array_2d();
         queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&*self.cam_buf_data.borrow()));
 
-        // Animate sun position - full day cycle every 120 seconds
+        // Animate sun position - configurable day cycle
         let time_secs = (now / 1000.0) as f32;
-        let day_cycle = std::f32::consts::TAU / 120.0;  // Full rotation in 120s
-        let sun_angle = time_secs * day_cycle;
+        let day_cycle_secs = self.game_state.borrow().day_cycle_seconds;
+        let sun_angle = if day_cycle_secs > 0.0 {
+            time_secs * std::f32::consts::TAU / day_cycle_secs
+        } else {
+            0.0  // Static sun at noon when disabled
+        };
         
         // Sun orbits in the sky: rises in east, sets in west
         // Y component: peaks at noon (angle=0), lowest at midnight (angle=PI)
