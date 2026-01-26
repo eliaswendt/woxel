@@ -14,6 +14,7 @@ pub struct Vertex {
 pub struct MeshBuffer {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
+    pub vertex_count: u32,
     pub index_count: u32,
 }
 
@@ -65,6 +66,7 @@ impl Mesh {
         MeshBuffer {
             vertex_buffer,
             index_buffer,
+            vertex_count: self.vertices.len() as u32,
             index_count: self.indices.len() as u32,
         }
     }

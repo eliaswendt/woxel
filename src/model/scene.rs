@@ -1,12 +1,9 @@
-use std::rc::Rc;
-
-use crate::{model::world::{Block, Chunk}, utils::{ChunkCoord, Mesh, MeshBuffer, WorldCoord}};
+use web_sys::console::log_1;
+use crate::{model::world::{Block, Chunk, ChunkBorders}, utils::{ChunkCoord, MeshBuffer, WorldCoord}};
 
 use super::world::VoxelDensityGenerator;
 
-
-
-fn select_lod(distance_to_player: usize) -> LOD {
+fn select_lod(distance_to_player: usize) -> u8 {
     // TODO: make these distances configurable
     return 0;
 
@@ -48,11 +45,78 @@ fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<((isi
     offsets
 }
 
-type LOD = u8;
+pub enum MeshGenerationState {
+    Pending,
+    Completed {
+        lod: u8,
+        buffer: MeshBuffer,
+    },
+}
 
-/// Active entry: (ChunkCoord, Chunk, (LOD, MeshBuffer))
-/// ChunkCoord stored so we can do frustum culling during rendering
-type ActiveEntry = (ChunkCoord, Chunk, (LOD, MeshBuffer));
+
+pub enum ActiveEntry {
+
+    /// loaded chunk that is non-empty
+    Loaded {
+        coord: ChunkCoord,
+        chunk: Chunk,
+        required_lod: u8,
+        mesh: MeshGenerationState,
+    },
+
+    /// an empty chunk
+    Empty {
+        coord: ChunkCoord,
+    },
+
+    /// chunk not loaded yet
+    Pending
+}
+
+impl ActiveEntry {
+    pub fn is_loaded(&self) -> bool {
+        matches!(self, ActiveEntry::Loaded { .. })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, ActiveEntry::Empty { .. })
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, ActiveEntry::Pending)
+    }
+
+    pub fn unset_mesh(&mut self) {
+        if let ActiveEntry::Loaded { mesh, .. } = self {
+            *mesh = MeshGenerationState::Pending;
+        }
+    }
+
+    fn needs_remeshing(&self) -> bool {
+        if let ActiveEntry::Loaded { required_lod, mesh, .. } = self {
+            match mesh {
+                MeshGenerationState::Completed { lod, .. } => lod != required_lod,
+                MeshGenerationState::Pending => true,
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn generate_and_upload_mesh(&mut self, device: &wgpu::Device, chunk_borders: &ChunkBorders) {
+        if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, required_lod, mesh } = self {
+            log_1(&format!("Generating mesh for chunk {:?} at LOD {}", entry_coord, required_lod).into());
+
+            let mut new_mesh = active_chunk.compute_mesh(*required_lod, chunk_borders);
+            new_mesh.offset_vertices_by(entry_coord);
+            let new_mesh_buffer = new_mesh.upload(device);
+
+            *mesh = MeshGenerationState::Completed { lod: *required_lod, buffer: new_mesh_buffer };
+        }
+    }
+}
+
+
 
 
 pub struct Scene {
@@ -60,65 +124,112 @@ pub struct Scene {
     /// 
     /// None = chunk not loaded (option exists to allow sparse storage)
     /// 
-    /// Some((Chunk, None)) = chunk loaded/generated but not meshed
+    /// Some((ChunkCoord, Chunk, None)) = chunk loaded/generated but not meshed (e.g. needs re-meshing)
     /// 
-    /// Some((Chunk, Some((LOD, MeshBuffer)))) = chunk loaded and meshed
-    pub active: Vec<Option<Rc<ActiveEntry>>>,
+    /// Some((ChunkCoord, Chunk, Some((LOD, MeshBuffer)))) = chunk loaded and meshed
+    pub active: Vec<ActiveEntry>,
 
     /// Number of chunks along each axis in the active chunk grid
     active_size: [usize; 3],
-    previous_player_chunk_coord: ChunkCoord,
+    previous_player_coord: ChunkCoord,
     sphere_offsets: Vec<((isize, isize, isize), usize)>,
 
-    empty_entry: Rc<ActiveEntry>,
     density_generator: VoxelDensityGenerator,
 }
 
 impl Scene {
-    pub fn new(active_size: [usize; 3], device: &wgpu::Device) -> Self {
+    pub fn new(active_size: [usize; 3]) -> Self {
         // ensure chunk_distance is a power of two for modulo indexing
         // assert!(chunk_distance.is_power_of_two(), "chunk_distance must be a power of two");
         
         let mut active = Vec::new();
 
         for _ in 0..active_size[0] * active_size[1] * active_size[2] {
-            active.push(None);
+            active.push(ActiveEntry::Pending);
         }
 
         Self {
             active_size: active_size,
             active: active,
-            previous_player_chunk_coord: ChunkCoord(0, 0, 0),
+            previous_player_coord: ChunkCoord(0, 0, 0),
 
-            empty_entry: Rc::new((ChunkCoord(0, 0, 0), Chunk::new_empty(), (0, Mesh::empty().upload(device)))),
             sphere_offsets: generate_qube_offset_in_spherical_order(active_size),
             density_generator: VoxelDensityGenerator::new(),
         }
     }
 
 
-    fn active_idx(&self, coord: &ChunkCoord) -> usize {
+    fn get_active_idx(&self, coord: &ChunkCoord) -> usize {
         coord.0.rem_euclid(self.active_size[0] as isize) as usize + 
         coord.1.rem_euclid(self.active_size[1] as isize) as usize * self.active_size[0] + 
         coord.2.rem_euclid(self.active_size[2] as isize) as usize * self.active_size[0] * self.active_size[1] 
     }
 
-    fn get_active(&self, coord: &ChunkCoord) -> Option<&ActiveEntry> {
-        self.active[self.active_idx(coord)].as_deref()
+    fn get_active_entry(&self, coord: &ChunkCoord) -> &ActiveEntry {
+        &self.active[self.get_active_idx(coord)]
     }
 
-    fn get_active_mut(&mut self, coord: &ChunkCoord) -> Option<&mut ActiveEntry> {
-        let active_idx = self.active_idx(coord);
-        if let Some(entry) = &mut self.active[active_idx] {
-            Rc::get_mut(entry)
+    fn get_active_entry_mut(&mut self, coord: &ChunkCoord) -> &mut ActiveEntry {
+        let active_idx = self.get_active_idx(coord);
+        &mut self.active[active_idx]
+    }
+
+
+
+    /// Insert or replace a chunk at the given coordinate
+    /// 
+    /// If the chunk is empty, it uses the shared empty chunk reference
+    /// 
+    /// Clears own mesh and marks neighboring chunks for re-meshing
+    fn insert_chunk(&mut self, coord: &ChunkCoord, chunk: Chunk, lod: u8) {
+                
+        *self.get_active_entry_mut(coord) = if chunk.is_empty() {
+            // if chunk is empty -> re-use shared empty chunk
+            ActiveEntry::Empty { coord: *coord }
         } else {
-            None
+            
+            // remove mesh of all neighboring chunks to force re-meshing
+            for neighbor_coord in self.get_neighbor_chunk_coords(coord) {
+                self.get_active_entry_mut(&neighbor_coord).unset_mesh();
+            }
+
+            // create new active entry
+            ActiveEntry::Loaded { coord: *coord, chunk: chunk, required_lod: lod, mesh: MeshGenerationState::Pending }
+        };
+    }
+
+
+    /// Collect border slices from neighboring chunks for accurate face culling
+    fn get_chunk_borders(&self, coord: &ChunkCoord) -> ChunkBorders {
+        let get_border = |entry: &ActiveEntry, face: usize| -> Option<_> {
+            if let ActiveEntry::Loaded { chunk, .. } = entry {
+                Some(chunk.get_border_slice(face))
+            } else {
+                None
+            }
+        };
+        ChunkBorders {
+            pos_x: get_border(self.get_active_entry(&ChunkCoord(coord.0 + 1, coord.1, coord.2)), 1), // their -X face
+            neg_x: get_border(self.get_active_entry(&ChunkCoord(coord.0 - 1, coord.1, coord.2)), 0), // their +X face
+            pos_y: get_border(self.get_active_entry(&ChunkCoord(coord.0, coord.1 + 1, coord.2)), 3), // their -Y face
+            neg_y: get_border(self.get_active_entry(&ChunkCoord(coord.0, coord.1 - 1, coord.2)), 2), // their +Y face
+            pos_z: get_border(self.get_active_entry(&ChunkCoord(coord.0, coord.1, coord.2 + 1)), 5), // their -Z face
+            neg_z: get_border(self.get_active_entry(&ChunkCoord(coord.0, coord.1, coord.2 - 1)), 4), // their +Z face
         }
     }
+    
 
-    fn unset_active(&mut self, coord: &ChunkCoord) {
-        let active_idx = self.active_idx(coord);
-        self.active[active_idx] = None;
+    /// Mark all 6 neighbors of a chunk as dirty (needing re-mesh)
+    fn get_neighbor_chunk_coords(&mut self, coord: &ChunkCoord) -> Vec<ChunkCoord> {
+
+        vec![
+            ChunkCoord(coord.0 + 1, coord.1, coord.2),
+            ChunkCoord(coord.0 - 1, coord.1, coord.2),
+            ChunkCoord(coord.0, coord.1 + 1, coord.2),
+            ChunkCoord(coord.0, coord.1 - 1, coord.2),
+            ChunkCoord(coord.0, coord.1, coord.2 + 1),
+            ChunkCoord(coord.0, coord.1, coord.2 - 1),
+        ]
     }
 
 
@@ -126,155 +237,79 @@ impl Scene {
         // Find which chunk contains this block
         let chunk_coord = world_coord.to_chunk_coord();
 
-        if let Some(active_entry) = self.get_active(&chunk_coord) {
+        if let ActiveEntry::Loaded { chunk, .. } = self.get_active_entry(&chunk_coord) {
             let block_coord = world_coord.to_block_coord();
-            Some(active_entry.1.get_block(&block_coord))
+            Some(chunk.get_block(&block_coord))
         } else {
             None
         }
     }
     
-    pub fn set_block(&mut self, world_coord: &WorldCoord, block: Block, overwrite: bool, device: &wgpu::Device) -> bool {
+
+    pub fn set_block(&mut self, world_coord: &WorldCoord, block: Block, device: &wgpu::Device, overwrite: bool) -> bool {
         // Find which chunk contains this block
         let chunk_coord = world_coord.to_chunk_coord();
-        let active_idx = self.active_idx(&chunk_coord);
         let block_coord = world_coord.to_block_coord();
 
-        // Check if this is the shared empty chunk - if so, we need to replace it with a unique chunk
-        if let Some(entry) = &self.active[active_idx] {
-            if Rc::ptr_eq(entry, &self.empty_entry) {
-                // Replace empty chunk with a new unique chunk containing the new block
-                let mut new_chunk = Chunk::new_empty();
-                if new_chunk.set_block(&block_coord, block, overwrite) {
-                    let mut new_mesh = new_chunk.compute_mesh(0);
-                    new_mesh.offset_vertices_by(&chunk_coord);
-                    self.active[active_idx] = Some(Rc::new((chunk_coord, new_chunk, (0, new_mesh.upload(device)))));
-                    return true;
-                }
-                return false;
-            }
+        
+        if self.get_active_entry(&chunk_coord).is_empty() {
+            *self.get_active_entry_mut(&chunk_coord) = ActiveEntry::Loaded {
+                coord: chunk_coord,
+                chunk: Chunk::new_empty(),
+                required_lod: 0,
+                mesh: MeshGenerationState::Pending,
+            };
         }
 
-        // Normal case: get mutable reference to existing non-shared chunk
-        if let Some((_, active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord) {
+        let chunk_borders = self.get_chunk_borders(&chunk_coord);
+        let neighbor_coords = self.get_neighbor_chunk_coords(&chunk_coord);
 
+        if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, mesh, .. } = self.get_active_entry_mut(&chunk_coord) {
             if active_chunk.set_block(&block_coord, block, overwrite) {
-                
-                // upload new mesh to GPU
-                let mut new_mesh = active_chunk.compute_mesh(*active_lod);
-                new_mesh.offset_vertices_by(&chunk_coord);
-                *active_mesh_buffer = new_mesh.upload(device);
 
-                true
-            } else {
-                false
+                let mut coords_to_mesh = neighbor_coords;
+                coords_to_mesh.push(chunk_coord);
+
+                // Block was set successfully, now also re-generate its mesh and that of all neighbors
+                for coord in coords_to_mesh {
+                    let mut new_mesh = active_chunk.compute_mesh(0, &chunk_borders);
+                    new_mesh.offset_vertices_by(entry_coord);
+                    let new_mesh_buffer = new_mesh.upload(device);
+                    *mesh = MeshGenerationState::Completed { lod: 0, buffer: new_mesh_buffer };
+                }
+                return true;
             }
-        } else {
-            false
         }
+        false
     }
 
-    // gets called in each frame to update loaded chunks
-    pub fn update(&mut self, player: &WorldCoord, device: &wgpu::Device, compute_budget: usize) -> usize {
 
-        let mut used_compute_budget = 0;
+    // gets called in each frame
+    pub fn update(&mut self, player_position: &WorldCoord, device: &wgpu::Device, max_n_chunk_generations: usize, max_n_mesh_generations: usize) -> (usize, usize) {
 
-        let player_chunk = player.to_chunk_coord();
+        let position = player_position.to_chunk_coord();
 
         // Update sliding chunk window based on player position
-        self.slide_active_chunk_window(player_chunk);
+        // this is almost free, as it only updates indices and does not generate anything
+        self.slide_active(position);
         
-        // iterate in order of distance from player
-        // Use index-based iteration to avoid cloning the entire Vec each frame
-        for i in 0..self.sphere_offsets.len() {
-            let ((offset_x, offset_y, offset_z), distance) = self.sphere_offsets[i];
+        let n_chunk_generations = self.generate_chunks(&position, max_n_chunk_generations);
+        let n_mesh_generations = self.generate_meshes(&position, device, max_n_mesh_generations);
 
-            let required_lod = select_lod(distance);
-
-            let chunk_coord = ChunkCoord(
-                player_chunk.0 + offset_x,
-                player_chunk.1 + offset_y,
-                player_chunk.2 + offset_z,
-            ); 
-            let active_idx = self.active_idx(&chunk_coord);
-
-            
-            // Skip chunks that are guaranteed to be empty (above terrain + some margin)
-            // Terrain max height is ~200, so chunks starting at y=224 (chunk 14) are air-only
-            // Exception: clouds at y=255 (chunk 15), but those are handled separately if needed
-            if chunk_coord.1 <= -2 || chunk_coord.1 >= 14 {
-                // These chunks are guaranteed empty - use the empty_entry directly
-                let active_idx = self.active_idx(&chunk_coord);
-                if self.active[active_idx].is_none() {
-                    self.active[active_idx] = Some(self.empty_entry.clone());
-                }
-                continue;
-            }
-
-            // this manual check is needed because Rc::get_mut() will return None for shared references (like our empty chunk)
-            if self.active[active_idx].is_some() && Rc::ptr_eq(self.active[active_idx].as_ref().unwrap(), &self.empty_entry) {
-                // it's the empty chunk - no LOD update needed
-                continue;
-            }
-
-
-            if let Some((_, active_chunk, (active_lod, active_mesh_buffer))) = self.get_active_mut(&chunk_coord){
-                // chunk is present -> check if LOD needs to be updated
-                if !active_chunk.is_empty() && *active_lod != required_lod {
-                    // println!("Updating LOD for Chunk {:?} from {} to {}", chunk_coord, *active_lod, required_lod);
-
-                    let mut new_mesh = active_chunk.compute_mesh(required_lod);
-                    new_mesh.offset_vertices_by(&chunk_coord);
-                    used_compute_budget += 1;
-
-                    (*active_lod, *active_mesh_buffer) = (required_lod, new_mesh.upload(device));
-                }
-
-            } else {
-                // log_1(&format!("self.active at {:?} is None", chunk_coord).into());
-                // chunk is missing -> generate and mesh it
-                let new_chunk = Chunk::new_polulated(&self.density_generator, &chunk_coord);
-                // let mut new_chunk = Chunk::new_flat(&chunk_coord, Block::Grass);
-
-                // now check whether the new chunk is empty
-                // if empty, use air chunk instance (safes memory and GPU resources)
-                // else compute mesh and upload to gpu
-                let active_idx = self.active_idx(&chunk_coord);
-
-                self.active[active_idx] = if new_chunk.is_empty() {
-                    // log_1(&format!("Re-Using air chunk at {:?}", chunk_coord).into());
-                    // instead of generating a new empty chunk, reuse the precomputed empty chunk
-                    Some(self.empty_entry.clone())
-                } else {
-                    // log_1(&format!("Loading Chunk {:?} at LOD {}", chunk_coord, required_lod).into());
-                    used_compute_budget += 5;
-                    let mut new_mesh = new_chunk.compute_mesh(required_lod);
-                    new_mesh.offset_vertices_by(&chunk_coord);
-
-                    Some(Rc::new((chunk_coord, new_chunk, (required_lod, new_mesh.upload(device)))))
-                };
-            }
-
-            if used_compute_budget >= compute_budget {
-                break;
-            }
-        }
-
-        // return used compute budget
-        used_compute_budget
+        (n_chunk_generations, n_mesh_generations)
     }
 
 
     /// Update loaded chunks based on player movement
     /// Uses modulo-based indexing to implement a sliding 3D array around the player
     /// Only loads "surface" layers of chunks in the direction of movement
-    pub fn slide_active_chunk_window(&mut self, player_chunk_coord: ChunkCoord) {
+    fn slide_active(&mut self, new_player_coord: ChunkCoord) {
         
         // Find in which direction(s) the player moved
         let deltas = [
-            player_chunk_coord.0 - self.previous_player_chunk_coord.0,
-            player_chunk_coord.1 - self.previous_player_chunk_coord.1,
-            player_chunk_coord.2 - self.previous_player_chunk_coord.2,
+            new_player_coord.0 - self.previous_player_coord.0,
+            new_player_coord.1 - self.previous_player_coord.1,
+            new_player_coord.2 - self.previous_player_coord.2,
         ];
 
         // process each axis movement independently
@@ -288,7 +323,7 @@ impl Scene {
             // log_1(&format!("Sliding chunks along axis {} by {}", axis, step).into());
 
             // track working position that gets updated each step (for multi-chunk teleports)
-            let mut working_base = self.previous_player_chunk_coord;
+            let mut working_base = self.previous_player_coord;
 
             // process each step of movement separately
             for _ in 0..movement_delta.abs() {
@@ -332,8 +367,8 @@ impl Scene {
                             }
                         };
                         
-                        // clear chunk at this position
-                        self.unset_active(&chunk_coord);
+                        // clear entry at this position
+                        *self.get_active_entry_mut(&chunk_coord) = ActiveEntry::Pending;
 
                     }
                 }
@@ -347,6 +382,99 @@ impl Scene {
             }
         }
 
-        self.previous_player_chunk_coord = player_chunk_coord;
+        self.previous_player_coord = new_player_coord;
+    }
+
+
+    fn generate_chunks(&mut self, position: &ChunkCoord, chunk_generation_budget: usize) -> usize {
+        let mut used_chunk_generation_budget = 0;
+
+        // iterate in order of distance from player
+        // Use index-based iteration to avoid cloning the entire Vec each frame
+        for i in 0..self.sphere_offsets.len() {
+            if used_chunk_generation_budget >= chunk_generation_budget {
+                break;
+            }
+
+            let ((offset_x, offset_y, offset_z), distance) = self.sphere_offsets[i];
+
+            let required_lod = select_lod(distance);
+            let chunk_coord = ChunkCoord(
+                position.0 + offset_x,
+                position.1 + offset_y,
+                position.2 + offset_z,
+            ); 
+            
+            if self.get_active_entry(&chunk_coord).is_pending() {
+
+                if chunk_coord.1 <= -2 || chunk_coord.1 >= 14 {
+                    // Skip chunks that are guaranteed to be empty (above terrain + some margin)
+                    // Terrain max height is ~200, so chunks starting at y=224 (chunk 14) are air-only
+                    // Exception: clouds at y=255 (chunk 15), but those are handled separately if needed
+                    *self.get_active_entry_mut(&chunk_coord) = ActiveEntry::Empty {
+                        coord: chunk_coord,
+                    };
+                } else {
+                    // generate new chunk
+                    let new_chunk = Chunk::new_polulated(&self.density_generator, &chunk_coord);
+
+                    used_chunk_generation_budget += 1;
+                    self.insert_chunk(&chunk_coord, new_chunk, required_lod);
+                }
+            }
+        }
+
+        used_chunk_generation_budget
+    }
+
+
+    fn generate_meshes(&mut self, position: &ChunkCoord, device: &wgpu::Device, mesh_generation_budget: usize) -> usize {
+
+        let mut used_mesh_generation_budget = 0;
+
+        // iterate in order of distance from player
+        // Use index-based iteration to avoid cloning the entire Vec each frame
+        for i in 0..self.sphere_offsets.len() {
+            if used_mesh_generation_budget >= mesh_generation_budget {
+                break;
+            }
+
+            let ((offset_x, offset_y, offset_z), _) = self.sphere_offsets[i];
+            
+            let chunk_coord = ChunkCoord(
+                position.0 + offset_x,
+                position.1 + offset_y,
+                position.2 + offset_z,
+            ); 
+
+
+            if self.get_active_entry(&chunk_coord).needs_remeshing() {
+                // collect borders here before borrowing self mutably
+                let chunk_borders = self.get_chunk_borders(&chunk_coord);
+
+                self.get_active_entry_mut(&chunk_coord).generate_and_upload_mesh(device, &chunk_borders);
+                used_mesh_generation_budget += 1;
+            }
+        }
+
+        used_mesh_generation_budget
+    }
+
+
+    /// sum number of vertices and faces in all active mesh buffers
+    pub fn get_n_vertices_and_faces(&self) -> (u32, u32) {
+        let mut total_vertices = 0;
+        let mut total_indices = 0;
+        
+        for active_entry in &self.active {
+            if let ActiveEntry::Loaded { mesh: MeshGenerationState::Completed { buffer, .. }, .. } = active_entry {
+                total_vertices += buffer.vertex_count;
+                total_indices += buffer.index_count;
+            }
+        }
+        
+        // Each triangle has 3 indices, so faces = indices / 3
+        let total_faces = total_indices / 3;
+        (total_vertices, total_faces)
     }
 }

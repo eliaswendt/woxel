@@ -1,10 +1,9 @@
-use std::rc::Rc;
-
 use wgpu::*;
 use wgpu::util::DeviceExt;
-use crate::model::{Chunk, Camera};
+use crate::model::Camera;
 use crate::utils::{ChunkCoord, MeshBuffer, Vertex, create_outline_mesh};
 use glam::Vec3;
+use crate::model::scene::{ActiveEntry, MeshGenerationState};
 
 // Shared graphics setup used by native and web
 pub struct CameraResources {
@@ -351,7 +350,7 @@ impl RenderState {
         device: &Device,
         queue: &Queue,
         surface: &Surface,
-        scene_chunks: &Vec<Option<Rc<(ChunkCoord, Chunk, (u8, MeshBuffer))>>>,
+        scene_chunks: &Vec<ActiveEntry>,
         depth_view: &TextureView,
         cam_bg: &BindGroup,
         outline_bg: &BindGroup,
@@ -448,7 +447,7 @@ impl RenderState {
             // DRAW CHUNKS with frustum culling
             for entry in scene_chunks.iter() {
                 // Render mesh if this chunk has one
-                if let Some((chunk_coord, _, (_, mesh_buffer))) = entry.as_deref() {
+                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
                     if mesh_buffer.index_count == 0 {
                         continue; // Skip empty meshes
                     }

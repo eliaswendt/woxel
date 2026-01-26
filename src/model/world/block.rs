@@ -103,7 +103,12 @@ impl Block {
     }
 
     pub fn is_solid(self) -> bool {
-        !matches!(self, Block::Empty | Block::Water | Block::Cloud)
+        !matches!(self, Block::Empty | Block::Water | Block::LakeWater | Block::Cloud)
+    }
+    
+    /// Returns true if this block is transparent/translucent (can see through it)
+    pub fn is_transparent(self) -> bool {
+        matches!(self, Block::Empty | Block::Water | Block::LakeWater | Block::Ice | Block::Cloud)
     }
     
     /// Returns surface roughness: 0.0 = glossy/smooth, 1.0 = rough/matte
@@ -167,10 +172,10 @@ impl Block {
             Block::Bedrock => [0.2, 0.2, 0.2, 1.0],
             Block::OakLeaves => [0.2, 0.6, 0.2, 1.0],
             Block::Wood => [0.5, 0.3, 0.1, 1.0],
-            Block::Water => [0.0, 0.1, 0.4, 1.0],
-            Block::Cloud => [0.95, 0.95, 0.95, 1.0],
+            Block::Water => [0.0, 0.1, 0.4, 0.9],
+            Block::Cloud => [0.95, 0.95, 0.95, 0.9],
             Block::Snow => [0.95, 0.97, 1.0, 1.0],
-            Block::Ice => [0.6, 0.8, 0.95, 1.0],
+            Block::Ice => [0.6, 0.8, 0.95, 0.9],
             Block::CoalOre => [0.3, 0.3, 0.3, 1.0],
             Block::IronOre => [0.7, 0.6, 0.5, 1.0],
             Block::GoldOre => [0.9, 0.8, 0.2, 1.0],

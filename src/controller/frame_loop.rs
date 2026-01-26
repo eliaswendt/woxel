@@ -135,13 +135,14 @@ impl FrameLoopContext {
         // Check if render distance changed - recreate Scene
         if render_distance_changed {
             self.game_state.borrow_mut().render_distance_changed = false;
-            *self.core.borrow_mut() = crate::model::Scene::new(new_render_distance, device);
+            *self.core.borrow_mut() = crate::model::Scene::new(new_render_distance);
         }
 
         self.core.borrow_mut().update(
             &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize),
             device,
-            compute_budget as usize
+            compute_budget as usize,
+            (compute_budget / 2) as usize,
         );
 
         // Resize handling
@@ -207,8 +208,8 @@ impl FrameLoopContext {
                 if self.core.borrow_mut().set_block(
                     &WorldCoord(bx as isize, by as isize, bz as isize),
                     crate::model::Block::Empty,
+                    device,
                     true,
-                    device
                 ) {
                     log_1(&"removed block".into());
                     // Successfully removed block, reload chunk
@@ -226,8 +227,8 @@ impl FrameLoopContext {
                 if self.core.borrow_mut().set_block(
                     &WorldCoord(placement_x as isize, placement_y as isize, placement_z as isize),
                     input.selected_block,
+                    device,
                     true,
-                    device
                 ) {
                     log_1(&format!("set block to {:?}", input.selected_block).into());
                     // Successfully placed block

@@ -1,7 +1,7 @@
 use super::terrain::VoxelDensityGenerator;
-use crate::utils::{ChunkCoord, BlockCoord, Mesh, Vertex};
-use super::block::{Block, face_dir_to_normal};
-
+use crate::utils::{ChunkCoord, BlockCoord, Mesh};
+use super::block::Block;
+use super::chunk_mesher::{ChunkBorders, compute_mesh, BORDER_SIZE};
 
 pub const CHUNK_SIZE: isize = 32;
 const N_BLOCKS_PER_CHUNK: usize = CHUNK_SIZE.pow(3) as usize;
@@ -186,218 +186,76 @@ impl Chunk {
         }
     }
 
-
-    // Greedy meshing with face culling - merges adjacent faces of same block type
-    pub fn compute_mesh(&self, lod: u8) -> Mesh {
-
-        assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
-
-        let mut verts = Vec::new();
-        let mut idxs = Vec::new();
-        let mut index: u32 = 0;
-
-        // Process each of the 6 face directions
-        for dir in 0..6 {
-            // Determine axis and direction for this sweep
-            let (axis, back_face) = match dir {
-                0 => (0, false), // +X
-                1 => (0, true),  // -X
-                2 => (1, false), // +Y
-                3 => (1, true),  // -Y
-                4 => (2, false), // +Z
-                5 => (2, true),  // -Z
-                _ => unreachable!(),
-            };
-
-            // Dimensions for the 2D sweep plane (cubic, so all equal to s)
-            let (u_dim, v_dim, w_dim) = (CHUNK_SIZE as usize, CHUNK_SIZE as usize, CHUNK_SIZE as usize);
-
-            // Sweep through each slice along the axis
-            for w in 0..w_dim {
-                // Create a mask for this slice (stores block or air for culled)
-                let mut mask = vec![Block::Empty; (u_dim * v_dim) as usize];
-
-                // Fill mask with visible faces
-                for v in 0..v_dim {
-                    for u in 0..u_dim {
-                        // Convert u,v,w back to x,y,z based on axis
-                        let (x, y, z) = match axis {
-                            0 => (w, u, v),
-                            1 => (u, w, v),
-                            2 => (u, v, w),
-                            _ => unreachable!(),
-                        };
-
-                        let block = self.blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
-
-                        // Render water and solid blocks, skip air
-                        if block.is_empty() { continue; }
-
-                        // Check if face should be visible (face culling)
-                        let neighbor = if back_face {
-                            // Looking backward along axis
-                            if match axis {
-                                0 => x == 0,
-                                1 => y == 0,
-                                2 => z == 0,
-                                _ => unreachable!(),
-                            } {
-                                Block::Empty // Out of bounds = air
-                            } else {
-                                match axis {
-                                    0 => self.blocks[BlockCoord(x - 1, y, z).get_block_idx()],
-                                    1 => self.blocks[BlockCoord(x, y - 1, z).get_block_idx()],
-                                    2 => self.blocks[BlockCoord(x, y, z - 1).get_block_idx()],
-                                    _ => unreachable!(),
-                                }
-                            }
-                        } else {
-                            // Looking forward along axis
-                            if match axis {
-                                0 => x + 1 >= CHUNK_SIZE as usize,
-                                1 => y + 1 >= CHUNK_SIZE as usize,
-                                2 => z + 1 >= CHUNK_SIZE as usize,
-                                _ => unreachable!(),
-                            } {
-                                Block::Empty // Out of bounds = air
-                            } else {
-                                match axis {
-                                    0 => self.blocks[BlockCoord(x + 1, y, z).get_block_idx()],
-                                    1 => self.blocks[BlockCoord(x, y + 1, z).get_block_idx()],
-                                    2 => self.blocks[BlockCoord(x, y, z + 1).get_block_idx()],
-                                    _ => unreachable!(),
-                                }
-                            }
-                        };
-
-                        // Face is visible if neighbor is air or different material (e.g., water next to land)
-                        let should_render = neighbor == Block::Empty || 
-                                            (block == Block::Water && neighbor != Block::Water) ||
-                                            (block != Block::Water && neighbor == Block::Water);
-                        if should_render {
-                            mask[(u + v * u_dim) as usize] = block;
-                        }
-                    }
-                }
-
-                // Greedy meshing: merge adjacent faces into rectangles
-                for v in 0..v_dim {
-                    for u in 0..u_dim {
-                        let mask_idx = (u + v * u_dim) as usize;
-                        let block = mask[mask_idx];
-                        if block == Block::Empty { continue; }
-
-                        // Find width (u direction)
-                        let mut width = 1;
-                        while u + width < u_dim {
-                            let check_idx = (u + width + v * u_dim) as usize;
-                            if mask[check_idx] != block { break; }
-                            width += 1;
-                        }
-
-                        // Find height (v direction)
-                        let mut height = 1;
-                        'height_loop: while v + height < v_dim {
-                            for du in 0..width {
-                                let check_idx = (u + du + (v + height) * u_dim) as usize;
-                                if mask[check_idx] != block {
-                                    break 'height_loop;
-                                }
-                            }
-                            height += 1;
-                        }
-
-                        // Clear merged area from mask
-                        for dv in 0..height {
-                            for du in 0..width {
-                                let clear_idx = (u + du + (v + dv) * u_dim) as usize;
-                                mask[clear_idx] = Block::Empty;
-                            }
-                        }
-
-                        // Generate quad for this merged rectangle
-                        let face_dir = dir as u8;
-                        let color = block.color(face_dir);
-                        let roughness = block.roughness();
-                        let normal = face_dir_to_normal(face_dir);
-
-                        // Generate quad vertices based on axis and dimensions
-                        // For each axis, we need to map (u,v,w) and (width,height) correctly
-                        let (p0, p1, p2, p3) = match axis {
-                            0 => { // X-axis: u=Y, v=Z, w=X
-                                let xf = if back_face { w as f32 } else { (w + 1) as f32 };
-                                if back_face {
-                                    (
-                                        [xf, u as f32, v as f32],
-                                        [xf, (u + width) as f32, v as f32],
-                                        [xf, (u + width) as f32, (v + height) as f32],
-                                        [xf, u as f32, (v + height) as f32],
-                                    )
-                                } else {
-                                    (
-                                        [xf, u as f32, (v + height) as f32],
-                                        [xf, (u + width) as f32, (v + height) as f32],
-                                        [xf, (u + width) as f32, v as f32],
-                                        [xf, u as f32, v as f32],
-                                    )
-                                }
-                            },
-                            1 => { // Y-axis: u=X, v=Z, w=Y
-                                let yf = if back_face { w as f32 } else { (w + 1) as f32 };
-                                if back_face {
-                                    (
-                                        [u as f32, yf, v as f32],
-                                        [u as f32, yf, (v + height) as f32],
-                                        [(u + width) as f32, yf, (v + height) as f32],
-                                        [(u + width) as f32, yf, v as f32],
-                                    )
-                                } else {
-                                    (
-                                        [(u + width) as f32, yf, v as f32],
-                                        [(u + width) as f32, yf, (v + height) as f32],
-                                        [u as f32, yf, (v + height) as f32],
-                                        [u as f32, yf, v as f32],
-                                    )
-                                }
-                            },
-                            2 => { // Z-axis: u=X, v=Y, w=Z
-                                let zf = if back_face { w as f32 } else { (w + 1) as f32 };
-                                if back_face {
-                                    (
-                                        [u as f32, v as f32, zf],
-                                        [(u + width) as f32, v as f32, zf],
-                                        [(u + width) as f32, (v + height) as f32, zf],
-                                        [u as f32, (v + height) as f32, zf],
-                                    )
-                                } else {
-                                    (
-                                        [(u + width) as f32, v as f32, zf],
-                                        [u as f32, v as f32, zf],
-                                        [u as f32, (v + height) as f32, zf],
-                                        [(u + width) as f32, (v + height) as f32, zf],
-                                    )
-                                }
-                            },
-                            _ => unreachable!(),
-                        };
-
-                        // UV coordinates: x = roughness, y = quad scale for potential tiling
-                        let uv_scale = (width.max(height)) as f32;
-
-                        verts.push(Vertex { pos: p0, normal, color, uv: [roughness, uv_scale] });
-                        verts.push(Vertex { pos: p1, normal, color, uv: [roughness, uv_scale] });
-                        verts.push(Vertex { pos: p2, normal, color, uv: [roughness, uv_scale] });
-                        verts.push(Vertex { pos: p3, normal, color, uv: [roughness, uv_scale] });
-
-                        // Reverse winding order to match CCW front face
-                        idxs.extend_from_slice(&[index, index + 2, index + 1, index, index + 3, index + 2]);
-                        index += 4;
+    /// Extract a border slice for a given face direction.
+    /// Returns the blocks at the boundary that would touch a neighboring chunk.
+    /// - face 0 (+X): blocks at x=CHUNK_SIZE-1 (needed by +X neighbor's neg_x)
+    /// - face 1 (-X): blocks at x=0 (needed by -X neighbor's pos_x)
+    /// - face 2 (+Y): blocks at y=CHUNK_SIZE-1
+    /// - face 3 (-Y): blocks at y=0
+    /// - face 4 (+Z): blocks at z=CHUNK_SIZE-1
+    /// - face 5 (-Z): blocks at z=0
+    pub fn get_border_slice(&self, face: usize) -> [Block; BORDER_SIZE] {
+        let mut slice = [Block::Empty; BORDER_SIZE];
+        let s = CHUNK_SIZE as usize;
+        
+        match face {
+            0 => { // +X face: x = CHUNK_SIZE-1, iterate y,z
+                for y in 0..s {
+                    for z in 0..s {
+                        slice[y + z * s] = self.blocks[BlockCoord(s - 1, y, z).get_block_idx()];
                     }
                 }
             }
+            1 => { // -X face: x = 0, iterate y,z
+                for y in 0..s {
+                    for z in 0..s {
+                        slice[y + z * s] = self.blocks[BlockCoord(0, y, z).get_block_idx()];
+                    }
+                }
+            }
+            2 => { // +Y face: y = CHUNK_SIZE-1, iterate x,z
+                for x in 0..s {
+                    for z in 0..s {
+                        slice[x + z * s] = self.blocks[BlockCoord(x, s - 1, z).get_block_idx()];
+                    }
+                }
+            }
+            3 => { // -Y face: y = 0, iterate x,z
+                for x in 0..s {
+                    for z in 0..s {
+                        slice[x + z * s] = self.blocks[BlockCoord(x, 0, z).get_block_idx()];
+                    }
+                }
+            }
+            4 => { // +Z face: z = CHUNK_SIZE-1, iterate x,y
+                for x in 0..s {
+                    for y in 0..s {
+                        slice[x + y * s] = self.blocks[BlockCoord(x, y, s - 1).get_block_idx()];
+                    }
+                }
+            }
+            5 => { // -Z face: z = 0, iterate x,y
+                for x in 0..s {
+                    for y in 0..s {
+                        slice[x + y * s] = self.blocks[BlockCoord(x, y, 0).get_block_idx()];
+                    }
+                }
+            }
+            _ => panic!("Invalid face direction"),
         }
+        
+        slice
+    }
 
-        Mesh { vertices: verts, indices: idxs }
+    /// Compute the mesh for this chunk using greedy meshing.
+    /// Delegates to the mesher module.
+    pub fn compute_mesh(&self, lod: u8, borders: &ChunkBorders) -> Mesh {
+        compute_mesh(&self.blocks, lod, borders)
+    }
+
+    /// Get read-only access to the blocks array for meshing.
+    pub fn blocks(&self) -> &[Block] {
+        &self.blocks
     }
 
     // /// Compute a subsampled version of this chunk for the given LOD level

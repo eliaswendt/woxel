@@ -110,7 +110,7 @@ async fn setup_app(
     // World and game state
     let game_state = Rc::new(RefCell::new(GameState::new()));
     let initial_render_distance = game_state.borrow().render_distance;
-    let core = Rc::new(RefCell::new(Scene::new(initial_render_distance, gpu.device.as_ref())));
+    let core = Rc::new(RefCell::new(Scene::new(initial_render_distance)));
     let raycast_target: Rc<RefCell<Option<(i32, i32, i32)>>> = Rc::new(RefCell::new(None));
     let input_state = Rc::new(RefCell::new(InputState::new()));
     let egui_events: Rc<RefCell<Vec<egui::Event>>> = Rc::new(RefCell::new(Vec::new()));
