@@ -1,7 +1,7 @@
 [package]
 name = "woxel"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A voxel-based Minecraft-style game engine in Rust with WASM and native support"
 authors = ["Elias Wendt <git@eliaswendt.de>"]
 repository = "https://github.com/eliaswendt/woxel"
