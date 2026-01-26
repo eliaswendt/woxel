@@ -110,7 +110,7 @@ async fn setup_app(
     // World and game state
     let game_state = Rc::new(RefCell::new(GameState::new()));
     let initial_render_distance = game_state.borrow().render_distance;
-    let core = Rc::new(RefCell::new(Scene::new(initial_render_distance)));
+    let scene = Rc::new(RefCell::new(Scene::new(initial_render_distance)));
     let raycast_target: Rc<RefCell<Option<(i32, i32, i32)>>> = Rc::new(RefCell::new(None));
     let input_state = Rc::new(RefCell::new(InputState::new()));
     let egui_events: Rc<RefCell<Vec<egui::Event>>> = Rc::new(RefCell::new(Vec::new()));
@@ -125,6 +125,7 @@ async fn setup_app(
         window,
         canvas,
         input_state.clone(),
+        scene.clone(),
         game_state.clone(),
         egui_events.clone(),
         cam.clone(),
@@ -166,7 +167,7 @@ async fn setup_app(
         lighting_buf: lighting_buf.clone(),
         lighting_buf_data,
         depth_view_cell,
-        core,
+        core: scene,
         input_state,
         game_state,
         camera_controller: CameraController::new(),
@@ -213,6 +214,7 @@ fn setup_input_listeners(
     window: &web_sys::Window,
     canvas: &web_sys::HtmlCanvasElement,
     input_state: Rc<RefCell<InputState>>,
+    scene: Rc<RefCell<Scene>>,
     game_state: Rc<RefCell<GameState>>,
     egui_events: Rc<RefCell<Vec<egui::Event>>>,
     cam: Rc<RefCell<Camera>>,
@@ -244,6 +246,9 @@ fn setup_input_listeners(
                     gs.player_pos = cam_eye - Vec3::new(0.0, 1.6, 0.0);
                 }
                 drop(gs);
+                e.prevent_default();
+            } else if input_processor.wants_to_remesh(&key){
+                scene.borrow_mut().remesh();
                 e.prevent_default();
             } else if input_processor.wants_to_toggle_wireframe(&key) {
                 if wireframe_available {

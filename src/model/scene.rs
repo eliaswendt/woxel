@@ -1,6 +1,6 @@
 use web_sys::console::log_1;
-use crate::{model::{CHUNK_SIZE, world::{Block, Chunk, ChunkBorders}}, utils::{ChunkCoord, MeshBuffer, WorldCoord}};
-use crate::utils::BlockCoord;
+use crate::{model::world::{Block, Chunk, ChunkBorders}, utils::{ChunkCoord, MeshBuffer, WorldCoord}};
+
 use super::world::VoxelDensityGenerator;
 
 fn select_lod(distance_to_player: usize) -> u8 {
@@ -175,6 +175,14 @@ impl Scene {
     }
 
 
+    pub fn remesh(&mut self) {
+        for active_entry in &mut self.active {
+            if let ActiveEntry::Loaded { mesh, .. } = active_entry {
+                *mesh = MeshGenerationState::Pending;
+            }
+        }
+    }
+
 
     /// Insert or replace a chunk at the given coordinate
     /// 
@@ -261,60 +269,26 @@ impl Scene {
             };
         }
 
-        
-        let block_was_set = if let ActiveEntry::Loaded { chunk, .. } = self.get_active_entry_mut(&chunk_coord) && chunk.set_block(&block_coord, block, overwrite) {
-            true
-        } else {
-            false
-        };
-        
-        if block_was_set {
-            let chunk_borders = self.get_chunk_borders(&chunk_coord);
-            self.get_active_entry_mut(&chunk_coord).generate_and_upload_mesh(device, &chunk_borders);
+        let chunk_borders = self.get_chunk_borders(&chunk_coord);
+        let neighbor_coords = self.get_neighbor_chunk_coords(&chunk_coord);
 
-            // Block was set successfully, if block is at border, only remesh corresponding neighbor
-            // find out which neighbors need remeshing
+        if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, mesh, .. } = self.get_active_entry_mut(&chunk_coord) {
+            if active_chunk.set_block(&block_coord, block, overwrite) {
 
-            // index of highest block coordinate along each axis
-            const HIGHER_BORDER: usize = (CHUNK_SIZE - 1) as usize;
+                let mut coords_to_mesh = neighbor_coords;
+                coords_to_mesh.push(chunk_coord);
 
-            match block_coord {
-                BlockCoord(0, _, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0 - 1, chunk_coord.1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(HIGHER_BORDER, _, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0 + 1, chunk_coord.1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, 0, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 - 1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, HIGHER_BORDER, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 + 1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, _, 0) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 - 1);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, _, HIGHER_BORDER) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 + 1);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                _ => {}
+                // Block was set successfully, now also re-generate its mesh and that of all neighbors
+                for coord in coords_to_mesh {
+                    let mut new_mesh = active_chunk.compute_mesh(0, &chunk_borders);
+                    new_mesh.offset_vertices_by(entry_coord);
+                    let new_mesh_buffer = new_mesh.upload(device);
+                    *mesh = MeshGenerationState::Completed { lod: 0, buffer: new_mesh_buffer };
+                }
+                return true;
             }
-
         }
-
-        block_was_set
+        false
     }
 
 
@@ -451,8 +425,6 @@ impl Scene {
                 } else {
                     // generate new chunk
                     let new_chunk = Chunk::new_polulated(&self.density_generator, &chunk_coord);
-
-                    log_1(&format!("Generated chunk at {:?} (distance {})", chunk_coord, distance).into());
 
                     used_chunk_generation_budget += 1;
                     self.insert_chunk(&chunk_coord, new_chunk, required_lod);

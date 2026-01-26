@@ -196,6 +196,7 @@ pub struct KeyBindings {
     pub right: String,
     pub jump: String,
     pub sprint: String,
+    pub remesh: String,
     pub toggle_camera: String,
     pub toggle_player: String,
     pub toggle_wireframe: String,
@@ -212,6 +213,7 @@ impl Default for KeyBindings {
             right: "d".to_string(),
             jump: " ".to_string(),
             sprint: "Shift".to_string(),
+            remesh: "r".to_string(),
             toggle_camera: "c".to_string(),
             toggle_player: "p".to_string(),
             toggle_wireframe: "g".to_string(),
@@ -258,6 +260,10 @@ impl InputProcessor {
 
     pub fn is_sprinting(&self, input: &InputState) -> bool {
         input.is_key_pressed(&self.bindings.sprint)
+    }
+
+    pub fn wants_to_remesh(&self, key: &str) -> bool {
+        key.eq_ignore_ascii_case(&self.bindings.remesh)
     }
 
     pub fn wants_to_toggle_camera(&self, key: &str) -> bool {

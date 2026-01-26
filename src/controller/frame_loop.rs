@@ -231,9 +231,6 @@ impl FrameLoopContext {
                     true,
                 ) {
                     log_1(&format!("set block to {:?}", input.selected_block).into());
-                    // Successfully placed block
-                    // TODO: Implement mesh update for block changes
-                    // For now, the mesh will be regenerated when the player moves to a new chunk
                 }
             }
             drop(input);

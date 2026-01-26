@@ -11,16 +11,6 @@ use crate::model::Block;
 const HOTBAR_ITEM_SIZE: f32 = 28.0;
 const HOTBAR_ITEM_SPACING: f32 = 2.0;
 
-/// Format large numbers with K/M suffixes for readability
-fn format_number(n: u32) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f32 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f32 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
 
 /// Build the complete UI and return egui output
 pub fn build_ui(
@@ -114,8 +104,8 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             ui.label(format!("Yaw: {:.1}° Pitch: {:.1}°", cam.borrow().yaw.to_degrees(), cam.borrow().pitch.to_degrees()));
             
             ui.separator();
-            ui.label(format!("Vertices: {}", format_number(total_vertices)));
-            ui.label(format!("Faces: {}", format_number(total_faces)));
+            ui.label(format!("Vertices: {}", total_vertices));
+            ui.label(format!("Faces: {}", total_faces));
             
             ui.separator();
             

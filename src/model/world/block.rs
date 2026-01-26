@@ -41,10 +41,9 @@ pub enum Block {
     DarkOakLeaves = 35,
     DarkOakWood = 36,
     // Water variants
-    LakeWater = 37,
     // Cliff blocks
-    Basalt = 38,
-    BlackStone = 39,
+    Basalt = 37,
+    BlackStone = 38,
 }
 
 impl Block {
@@ -87,9 +86,8 @@ impl Block {
             34 => Block::AcaciaWood,
             35 => Block::DarkOakLeaves,
             36 => Block::DarkOakWood,
-            37 => Block::LakeWater,
-            38 => Block::Basalt,
-            39 => Block::BlackStone,
+            37 => Block::Basalt,
+            38 => Block::BlackStone,
             _ => Block::Empty,
         }
     }
@@ -103,12 +101,12 @@ impl Block {
     }
 
     pub fn is_solid(self) -> bool {
-        !matches!(self, Block::Empty | Block::Water | Block::LakeWater | Block::Cloud)
+        !matches!(self, Block::Empty | Block::Water | Block::Cloud)
     }
     
     /// Returns true if this block is transparent/translucent (can see through it)
     pub fn is_transparent(self) -> bool {
-        matches!(self, Block::Empty | Block::Water | Block::LakeWater | Block::Ice | Block::Cloud)
+        matches!(self, Block::Empty | Block::Water| Block::Ice | Block::Cloud)
     }
     
     /// Returns surface roughness: 0.0 = glossy/smooth, 1.0 = rough/matte
@@ -116,7 +114,7 @@ impl Block {
         match self {
             // Very glossy (wet/polished) - strong reflections!
             Block::Ice => 0.02,
-            Block::Water | Block::LakeWater => 0.05,
+            Block::Water => 0.05,
             Block::DiamondOre => 0.08,
             
             // Smooth/polished - visible shine
@@ -172,10 +170,10 @@ impl Block {
             Block::Bedrock => [0.2, 0.2, 0.2, 1.0],
             Block::OakLeaves => [0.2, 0.6, 0.2, 1.0],
             Block::Wood => [0.5, 0.3, 0.1, 1.0],
-            Block::Water => [0.0, 0.1, 0.4, 0.9],
-            Block::Cloud => [0.95, 0.95, 0.95, 0.9],
+            Block::Water => [0.0, 0.1, 0.4, 1.0],
+            Block::Cloud => [0.95, 0.95, 0.95, 1.0],
             Block::Snow => [0.95, 0.97, 1.0, 1.0],
-            Block::Ice => [0.6, 0.8, 0.95, 0.9],
+            Block::Ice => [0.6, 0.8, 0.95, 1.0],
             Block::CoalOre => [0.3, 0.3, 0.3, 1.0],
             Block::IronOre => [0.7, 0.6, 0.5, 1.0],
             Block::GoldOre => [0.9, 0.8, 0.2, 1.0],
@@ -199,7 +197,6 @@ impl Block {
             Block::AcaciaWood => [0.6, 0.4, 0.2, 1.0],
             Block::DarkOakLeaves => [0.1, 0.35, 0.15, 1.0],
             Block::DarkOakWood => [0.3, 0.2, 0.1, 1.0],
-            Block::LakeWater => [0.0, 0.15, 0.5, 1.0],
             Block::Basalt => [0.3, 0.3, 0.35, 1.0],
             Block::BlackStone => [0.25, 0.25, 0.28, 1.0],
         }
