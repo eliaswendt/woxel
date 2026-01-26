@@ -62,8 +62,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let hash3 = fract(hash_base * 1.7);
     
     // Vary brightness and hue slightly per block
-    let brightness_var = mix(0.96, 1.08, hash1);
-    let hue_shift = (hash2 - 0.5) * 0.05;
+    let brightness_var = mix(0.98, 1.08, hash1);
+    let hue_shift = (hash2 - 0.5) * 0.2;
     var varied_color = base_color * brightness_var;
     varied_color.r += hue_shift;
     varied_color.b -= hue_shift;
