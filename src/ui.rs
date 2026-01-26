@@ -11,13 +11,24 @@ use crate::model::Block;
 const HOTBAR_ITEM_SIZE: f32 = 28.0;
 const HOTBAR_ITEM_SPACING: f32 = 2.0;
 
+/// Format large numbers with K/M suffixes for readability
+fn format_number(n: u32) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f32 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f32 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Build the complete UI and return egui output
 pub fn build_ui(
     egui_ctx: &Context,
     cam: &Rc<RefCell<Camera>>,
     game_state: &Rc<RefCell<GameState>>,
     input_state: &Rc<RefCell<InputState>>,
-    core: &Rc<RefCell<Scene>>,
+    scene: &Rc<RefCell<Scene>>,
     canvas_width: u32,
     canvas_height: u32,
     dt: f32,
@@ -56,7 +67,7 @@ pub fn build_ui(
 
     egui_ctx.run(raw_input, |ctx| {
         draw_crosshair(ctx, ppp);
-        draw_debug_window(ctx, cam, game_state, core, dt);
+        draw_debug_window(ctx, cam, game_state, scene, dt);
         draw_hotbar(ctx, input_state, canvas_width, canvas_height, ppp);
     })
 }
@@ -83,11 +94,14 @@ fn draw_crosshair(ctx: &Context, _ppp: f32) {
     );
 }
 
-fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, _core: &Rc<RefCell<Scene>>, dt: f32) {
+fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, core: &Rc<RefCell<Scene>>, dt: f32) {
     let player_pos = game_state.borrow().player_pos;
     let chunk_x = (player_pos.x / CHUNK_SIZE as f32).floor() as i32;
     let chunk_y = (player_pos.y / CHUNK_SIZE as f32).floor() as i32;
     let chunk_z = (player_pos.z / CHUNK_SIZE as f32).floor() as i32;
+    
+    // Get GPU buffer stats
+    let (total_vertices, total_faces) = core.borrow().get_n_vertices_and_faces();
 
     egui::Window::new("Debug")
         .default_pos([8.0, 8.0])
@@ -98,6 +112,10 @@ fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<R
             ui.label(format!("Pos: {:.0} {:.0} {:.0}", player_pos.x, player_pos.y, player_pos.z));
             ui.label(format!("Chunk: {} {} {}", chunk_x, chunk_y, chunk_z));
             ui.label(format!("Yaw: {:.1}° Pitch: {:.1}°", cam.borrow().yaw.to_degrees(), cam.borrow().pitch.to_degrees()));
+            
+            ui.separator();
+            ui.label(format!("Vertices: {}", format_number(total_vertices)));
+            ui.label(format!("Faces: {}", format_number(total_faces)));
             
             ui.separator();
             
