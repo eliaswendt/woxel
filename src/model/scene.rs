@@ -284,40 +284,40 @@ impl Scene {
             // index of highest block coordinate along each axis
             const HIGHER_BORDER: usize = (CHUNK_SIZE - 1) as usize;
 
-            match block_coord {
-                BlockCoord(0, _, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0 - 1, chunk_coord.1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(HIGHER_BORDER, _, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0 + 1, chunk_coord.1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, 0, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 - 1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, HIGHER_BORDER, _) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 + 1, chunk_coord.2);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, _, 0) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 - 1);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                BlockCoord(_, _, HIGHER_BORDER) => {
-                    let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 + 1);
-                    let chunk_borders = self.get_chunk_borders(&neighbor_coord);
-                    self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
-                },
-                _ => {}
+            if block_coord.0 == 0 { // min x border
+                let neighbor_coord = ChunkCoord(chunk_coord.0 - 1, chunk_coord.1, chunk_coord.2);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
+            }
+            if block_coord.0 == HIGHER_BORDER { // max x border
+                let neighbor_coord = ChunkCoord(chunk_coord.0 + 1, chunk_coord.1, chunk_coord.2);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
             }
 
+            if block_coord.1 == 0 { // min y border
+                let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 - 1, chunk_coord.2);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
+            }
+
+            if block_coord.1 == HIGHER_BORDER { // max y border
+                let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1 + 1, chunk_coord.2);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
+            }
+
+            if block_coord.2 == 0 { // min z border
+                let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 - 1);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
+            }
+
+            if block_coord.2 == HIGHER_BORDER { // max z border
+                let neighbor_coord = ChunkCoord(chunk_coord.0, chunk_coord.1, chunk_coord.2 + 1);
+                let chunk_borders = self.get_chunk_borders(&neighbor_coord);
+                self.get_active_entry_mut(&neighbor_coord).generate_and_upload_mesh(device, &chunk_borders);
+            }
         }
 
         block_was_set
