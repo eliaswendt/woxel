@@ -1,6 +1,5 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use web_sys::console::log_1;
 use wgpu::{Device, Queue, Surface, TextureView};
 use web_sys::Window;
 
@@ -198,12 +197,15 @@ impl FrameLoopContext {
                 0,
                 bytemuck::bytes_of(&*self.outline_transform.borrow()),
             );
+
+            log::debug!("Raycast hit block at ({}, {}, {})", bx, by, bz);
+
             render_state.show_outline = true;
 
             // Handle block removal (left click) and placement (right click)
             let input = self.input_state.borrow();
             if input.left_click {
-                log_1(&format!("trying to remove block at ({}, {}, {})", bx, by, bz).into());
+
                 // Remove block: delete the hit block
                 if self.core.borrow_mut().set_block(
                     &WorldCoord(bx as isize, by as isize, bz as isize),
@@ -211,12 +213,14 @@ impl FrameLoopContext {
                     device,
                     true,
                 ) {
-                    log_1(&"removed block".into());
+                    log::info!("Removed block at ({}, {}, {})", bx, by, bz);
                     // Successfully removed block, reload chunk
                     // Calculate chunk world key: (chunk_index * chunk_size)
 
                     // TODO: Implement mesh update for block changes
                     // For now, the mesh will be regenerated when the player moves to a new chunk
+                } else {
+                    log::warn!("Failed to remove block at ({}, {}, {})", bx, by, bz);
                 }
             } else if input.right_click {
                 // Place block: calculate position adjacent to the raycast target using the face normal
@@ -230,7 +234,9 @@ impl FrameLoopContext {
                     device,
                     true,
                 ) {
-                    log_1(&format!("set block to {:?}", input.selected_block).into());
+                    log::info!("Placed block at ({}, {}, {})", placement_x, placement_y, placement_z);
+                } else {
+                    log::warn!("Failed to place block at ({}, {}, {})", placement_x, placement_y, placement_z);
                 }
             }
             drop(input);

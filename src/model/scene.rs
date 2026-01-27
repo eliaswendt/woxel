@@ -1,4 +1,3 @@
-use web_sys::console::log_1;
 use crate::{model::{CHUNK_SIZE, world::{Block, Chunk, ChunkBorders}}, utils::{BlockCoord, ChunkCoord, MeshBuffer, WorldCoord}};
 
 use super::world::VoxelDensityGenerator;
@@ -105,8 +104,7 @@ impl ActiveEntry {
 
     fn generate_and_upload_mesh(&mut self, device: &wgpu::Device, chunk_borders: &ChunkBorders) {
         if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, required_lod, mesh } = self {
-            log_1(&format!("Generating mesh for chunk {:?} at LOD {}", entry_coord, required_lod).into());
-
+            log::info!("Generating mesh for chunk {:?} at LOD {}", entry_coord, required_lod);
             let mut new_mesh = active_chunk.compute_mesh(*required_lod, chunk_borders);
             new_mesh.offset_vertices_by(entry_coord);
             let new_mesh_buffer = new_mesh.upload(device);
@@ -325,7 +323,7 @@ impl Scene {
         block_was_set
     }
 
-    
+
     // gets called in each frame
     pub fn update(&mut self, player_position: &WorldCoord, device: &wgpu::Device, max_n_chunk_generations: usize, max_n_mesh_generations: usize) -> (usize, usize) {
 
@@ -362,7 +360,7 @@ impl Scene {
             else if *movement_delta > 0 { 1 } // moved in positive direction
             else { -1 }; // moved in negative direction
 
-            // log_1(&format!("Sliding chunks along axis {} by {}", axis, step).into());
+            log::debug!("Sliding chunks along axis {} by {}", axis, step);
 
             // track working position that gets updated each step (for multi-chunk teleports)
             let mut working_base = self.previous_player_coord;

@@ -1,5 +1,3 @@
-// Re-export all public modules so they can be used from main.rs
-pub mod logging;
 pub mod utils;
 pub mod ui;
 
@@ -19,17 +17,23 @@ use glam::Vec3;
 use controller::{GameState, CameraController, CameraUniform, LightingUniform, TransformUniform, InputState, FrameLoopContext, PhysicsSystem, InputProcessor};
 use model::{Camera, Scene};
 use view::render;
+
+
 #[cfg(target_arch = "wasm32")]
 use view::GpuContext;
+
 
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
+
     console_error_panic_hook::set_once();
 
-    logging::init();
+    console_log::init_with_level(log::Level::Trace).expect("error initializing log");
+    log::info!("Woxel starting up...");
+
     let (window, document, canvas) = init_canvas(800, 600)?;
     setup_app(&window, &document, &canvas).await
 }
@@ -254,7 +258,7 @@ fn setup_input_listeners(
                 if wireframe_available {
                     input_state.borrow_mut().toggle_wireframe();
                 } else {
-                    web_sys::console::log_1(&"Wireframe mode not available on WebGPU/WASM".into());
+                    log::warn!("Wireframe mode not available on WebGPU/WASM");
                 }
                 e.prevent_default();
             } else if input_processor.wants_to_toggle_chunk_borders(&key) {
