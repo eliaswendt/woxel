@@ -29,7 +29,7 @@ impl GameState {
             camera_follows_player: true,
             render_distance: [25, 16, 25],
             render_distance_changed: false,
-            compute_budget: 50,
+            compute_budget: 15,
             day_cycle_seconds: 120.0,  // 2 minute day cycle by default
         }
     }
