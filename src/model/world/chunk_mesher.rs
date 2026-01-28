@@ -86,14 +86,15 @@ fn should_render_face(block: Block, neighbor: Block) -> bool {
     if neighbor.is_empty() {
         return true;
     }
+
     // Render solid faces against transparent neighbors
     if !block.is_transparent() && neighbor.is_transparent() {
         return true;
     }
-    // Render transparent faces against solid neighbors
-    if block.is_transparent() && !neighbor.is_transparent() {
-        return true;
-    }
+    // // Render transparent faces against solid neighbors
+    // if block.is_transparent() && !neighbor.is_transparent() {
+    //     return true;
+    // }
     // Render faces between different transparent types
     if block.is_transparent() && neighbor.is_transparent() && block != neighbor {
         return true;
@@ -101,20 +102,161 @@ fn should_render_face(block: Block, neighbor: Block) -> bool {
     false
 }
 
-/// Greedy meshing with face culling - merges adjacent faces of same block type.
-/// 
-/// # Arguments
-/// * `blocks` - The block array for this chunk
-/// * `lod` - Level of detail (currently only 0 is supported)
-/// * `borders` - Border slices from neighboring chunks for accurate edge culling
 pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
+    compute_mesh_greedy(blocks, lod, borders)
+    // compute_mesh_naive(blocks, lod, borders)
+}
+
+
+/// naive algorithm to compute mesh for every block individually checking if (for testing purposes)
+pub fn compute_mesh_naive(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
     assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
 
     let mut verts = Vec::new();
     let mut idxs = Vec::new();
     let mut index: u32 = 0;
 
-    // Process each of the 6 face directions
+    let width: f32 = 1.;
+
+
+    for x in 0..CHUNK_SIZE {
+        for y in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                
+                let block = blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
+                if block.is_empty() {
+                    continue;
+                }
+
+                // 0: +X
+                // 1: -X
+                // 2: +Y
+                // 3: -Y
+                // 4: +Z
+                // 5: -Z
+                for face_dir in 0..6 {
+
+                    let neighbor_block = match face_dir {
+                        0 => get_neighbor(blocks, x as isize + 1, y as isize, z as isize, borders), // +X
+                        1 => get_neighbor(blocks, x as isize - 1, y as isize, z as isize, borders), // -X
+                        2 => get_neighbor(blocks, x as isize, y as isize + 1, z as isize, borders), // +Y
+                        3 => get_neighbor(blocks, x as isize, y as isize - 1, z as isize, borders), // -Y
+                        4 => get_neighbor(blocks, x as isize, y as isize, z as isize + 1, borders), // +Z
+                        5 => get_neighbor(blocks, x as isize, y as isize, z as isize - 1, borders), // -Z
+                        _ => unreachable!(),
+                    };
+
+                    if !should_render_face(block, neighbor_block) {
+                        continue;
+                    }
+
+                    let color = block.color(face_dir);
+                    let roughness = block.roughness();
+                    let normal = face_dir_to_normal(face_dir as u8);
+                    
+                    let pos = [x as f32, y as f32, z as f32];
+                    
+                    match face_dir {
+                        0 => { // +X
+                            // 1.: links unten
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            // 2.: rechts unten
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 3.: rechts oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 4.: links oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2] + width], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index, index+1, index+2, index, index+2, index+3]);
+                            index += 4;
+                        },
+                        1 => { // -X
+                            // 0.: links unten vorne
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2]+width], normal, color, uv: [roughness, width] });
+                            // 1.: links unten hinten
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            // 2.: links oben hinten
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 3.: links oben vorne
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2]+width], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index+2, index+1, index, index+3, index+2, index]);
+                            index += 4;
+                        },
+                        2 => { // +Y
+                            // 0: links vorne
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 1: rechts vorne
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 2: rechts hinten
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 3: links hinten
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2] + width], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index+2, index+1, index, index+3, index+2, index]);
+                            index += 4;
+                        },
+                        3 => { // -Y
+                            // 1.: links unten
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            // 2.: rechts unten
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 3.: rechts oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 4.: links oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index+2, index+1, index, index+3, index+2, index]);
+                            index += 4;
+                        }, 
+                        4 => { // +Z
+                            // 1.: links unten
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 2.: rechts unten
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 3.: rechts oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2] + width], normal, color, uv: [roughness, width] });
+                            // 4.: links oben
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2] + width], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index, index+1, index+2, index, index+2, index+3]);
+                            index += 4;
+                        },
+                        5 => { // -Z
+                            // 1.: links unten
+                            verts.push(Vertex { pos: [pos[0], pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            // 2.: rechts unten
+                            verts.push(Vertex { pos: [pos[0], pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 3.: rechts oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1] + width, pos[2]], normal, color, uv: [roughness, width] });
+                            // 4.: links oben
+                            verts.push(Vertex { pos: [pos[0] + width, pos[1], pos[2]], normal, color, uv: [roughness, width] });
+                            idxs.extend_from_slice(&[index, index+1, index+2, index, index+2, index+3]);
+                            index += 4;
+                        },
+
+                        _ => {
+                            // Other faces would be implemented similarly
+                        }
+                    }
+                }   
+            }
+        }
+    }
+
+    Mesh { vertices: verts, indices: idxs }
+}
+
+
+/// Greedy meshing with face culling - merges adjacent faces of same block type.
+/// 
+/// # Arguments
+/// * `blocks` - The block array for this chunk
+/// * `lod` - Level of detail (currently only 0 is supported)
+/// * `borders` - Border slices from neighboring chunks for accurate edge culling
+fn compute_mesh_greedy(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
+    assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
+
+    let mut verts = Vec::new();
+    let mut idxs = Vec::new();
+    let mut index: u32 = 0;
+
+    // Process each of the 6 face directions (sweep through the cube from each side)
     for dir in 0..6 {
         // Determine axis and direction for this sweep
         let (axis, back_face) = match dir {
@@ -131,6 +273,7 @@ pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
         let (u_dim, v_dim, w_dim) = (CHUNK_SIZE as usize, CHUNK_SIZE as usize, CHUNK_SIZE as usize);
 
         // Sweep through each slice along the axis
+        // w is the sweep "depth"
         for w in 0..w_dim {
             // Create a mask for this slice (stores block or air for culled)
             let mut mask = vec![Block::Empty; (u_dim * v_dim) as usize];

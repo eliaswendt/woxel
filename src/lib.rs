@@ -30,7 +30,6 @@ pub async fn start() -> Result<(), JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
 
     console_error_panic_hook::set_once();
-
     console_log::init_with_level(log::Level::Trace).expect("error initializing log");
     log::info!("Woxel starting up...");
 
@@ -252,7 +251,7 @@ fn setup_input_listeners(
                 drop(gs);
                 e.prevent_default();
             } else if input_processor.wants_to_remesh(&key){
-                scene.borrow_mut().remesh();
+                scene.borrow_mut().remesh_all();
                 e.prevent_default();
             } else if input_processor.wants_to_toggle_wireframe(&key) {
                 if wireframe_available {
