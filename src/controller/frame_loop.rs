@@ -213,7 +213,7 @@ impl FrameLoopContext {
                     device,
                     true,
                 ) {
-                    log::info!("Removed block at ({}, {}, {})", bx, by, bz);
+                    log::debug!("Removed block at ({}, {}, {})", bx, by, bz);
                     // Successfully removed block, reload chunk
                     // Calculate chunk world key: (chunk_index * chunk_size)
 
@@ -234,7 +234,7 @@ impl FrameLoopContext {
                     device,
                     true,
                 ) {
-                    log::info!("Placed block at ({}, {}, {})", placement_x, placement_y, placement_z);
+                    log::debug!("Placed block at ({}, {}, {})", placement_x, placement_y, placement_z);
                 } else {
                     log::warn!("Failed to place block at ({}, {}, {})", placement_x, placement_y, placement_z);
                 }

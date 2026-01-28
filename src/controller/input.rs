@@ -114,7 +114,6 @@ impl InputState {
             InputEvent::PointerLockChanged { locked } => {
                 self.pointer_locked = *locked;
             }
-            _ => {}
         }
     }
 
