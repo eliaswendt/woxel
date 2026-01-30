@@ -14,13 +14,13 @@ use crate::ui;
 
 /// Main game loop state and update logic
 pub struct FrameLoopContext {
-    pub cam: Rc<RefCell<Camera>>,
+    pub camera: Rc<RefCell<Camera>>,
     pub cam_buf: wgpu::Buffer,
     pub cam_buf_data: Rc<RefCell<CameraUniform>>,
     pub lighting_buf: wgpu::Buffer,
     pub lighting_buf_data: Rc<RefCell<LightingUniform>>,
     pub depth_view_cell: Rc<RefCell<TextureView>>,
-    pub core: Rc<RefCell<Scene>>,
+    pub scene: Rc<RefCell<Scene>>,
     pub input_state: Rc<RefCell<InputState>>,
     pub game_state: Rc<RefCell<GameState>>,
     pub camera_controller: CameraController,
@@ -88,56 +88,56 @@ impl FrameLoopContext {
             )
         };
 
-        let mut game = self.game_state.borrow_mut();
+        let mut game_state = self.game_state.borrow_mut();
 
         // Apply mouse look (always)
         self.camera_controller
-            .apply_look(&mut self.cam.borrow_mut(), dx, dy);
+            .apply_look(&mut self.camera.borrow_mut(), dx, dy);
 
         // Sync player orientation with camera if following
-        if game.camera_follows_player {
-            let c = self.cam.borrow();
-            game.player_yaw = c.yaw;
-            game.player_pitch = c.pitch;
+        if game_state.camera_follows_player {
+            let c = self.camera.borrow();
+            game_state.player_yaw = c.yaw;
+            game_state.player_pitch = c.pitch;
         }
 
         // Update camera position (WASD, Space, Shift always control camera)
         self.camera_controller
-            .update_movement(&mut self.cam.borrow_mut(), &pressed_keys, dt, is_control);
+            .update_movement(&mut self.camera.borrow_mut(), &pressed_keys, dt, is_control);
 
         // Sync player position with camera if following
-        if game.camera_follows_player {
-            let c = self.cam.borrow();
-            game.player_pos = self.camera_controller.sync_player_from_camera(&c);
+        if game_state.camera_follows_player {
+            let c = self.camera.borrow();
+            game_state.player_pos = self.camera_controller.sync_player_from_camera(&c);
         }
 
         // Player physics (only in player active mode)
-        if game.player_active && game.camera_follows_player {
-            let mut pos = game.player_pos;
-            let mut vel = game.player_vel;
-            self.physics_system.update(&mut pos, &mut vel, &pressed_keys, &self.core.borrow(), dt);
-            game.player_pos = pos;
-            game.player_vel = vel;
+        if game_state.player_active && game_state.camera_follows_player {
+            let mut pos = game_state.player_pos;
+            let mut vel = game_state.player_vel;
+            self.physics_system.update(&mut pos, &mut vel, &pressed_keys, &self.scene.borrow(), dt);
+            game_state.player_pos = pos;
+            game_state.player_vel = vel;
 
             // Update camera to match player after physics
             self.camera_controller
-                .sync_camera_from_player(&mut self.cam.borrow_mut(), game.player_pos);
+                .sync_camera_from_player(&mut self.camera.borrow_mut(), game_state.player_pos);
         }
 
         // Update chunks based on player position
-        let p_pos = game.player_pos;
-        let render_distance_changed = game.render_distance_changed;
-        let new_render_distance = game.render_distance;
-        let compute_budget = game.compute_budget;
-        drop(game); // Release game_state borrow
+        let p_pos = game_state.player_pos;
+        let render_distance_changed = game_state.render_distance_changed;
+        let new_render_distance = game_state.render_distance;
+        let compute_budget = game_state.compute_budget;
+        drop(game_state); // Release game_state borrow
 
         // Check if render distance changed - recreate Scene
         if render_distance_changed {
             self.game_state.borrow_mut().render_distance_changed = false;
-            *self.core.borrow_mut() = crate::model::Scene::new(new_render_distance);
+            *self.scene.borrow_mut() = crate::model::Scene::new(new_render_distance);
         }
 
-        self.core.borrow_mut().update(
+        self.scene.borrow_mut().update(
             &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize),
             device,
             compute_budget as usize,
@@ -149,7 +149,7 @@ impl FrameLoopContext {
 
         // Update camera uniform
         self.cam_buf_data.borrow_mut().view_proj =
-            self.cam.borrow().view_proj().to_cols_array_2d();
+            self.camera.borrow().view_proj().to_cols_array_2d();
         queue.write_buffer(&self.cam_buf, 0, bytemuck::bytes_of(&*self.cam_buf_data.borrow()));
 
         // Animate sun position - configurable day cycle
@@ -170,7 +170,7 @@ impl FrameLoopContext {
             0.3,                                       // Slight north offset for angled shadows
         ).normalize();
         
-        let player_eye = self.cam.borrow().eye;
+        let player_eye = self.camera.borrow().eye;
         {
             let mut lighting = self.lighting_buf_data.borrow_mut();
             lighting.sun_dir = [sun_dir.x, sun_dir.y, sun_dir.z];
@@ -180,8 +180,8 @@ impl FrameLoopContext {
         queue.write_buffer(&self.lighting_buf, 0, bytemuck::bytes_of(&*self.lighting_buf_data.borrow()));
 
         // Raycast to find block under crosshair
-        let raycast_result = self.cam.borrow().raycast(8.0, |x, y, z| {
-            match self.core.borrow().get_block(&WorldCoord(x as isize, y as isize, z as isize)) {
+        let raycast_result = self.camera.borrow().raycast(8.0, |x, y, z| {
+            match self.scene.borrow().get_block(&WorldCoord(x as isize, y as isize, z as isize)) {
                 Some(b) => b.is_solid(),
                 None => false,
             }
@@ -207,7 +207,7 @@ impl FrameLoopContext {
             if input.left_click {
 
                 // Remove block: delete the hit block
-                if self.core.borrow_mut().set_block(
+                if self.scene.borrow_mut().set_block(
                     &WorldCoord(bx as isize, by as isize, bz as isize),
                     crate::model::Block::Empty,
                     device,
@@ -228,7 +228,7 @@ impl FrameLoopContext {
                 let placement_y = by + face_ny;
                 let placement_z = bz + face_nz;
                 
-                if self.core.borrow_mut().set_block(
+                if self.scene.borrow_mut().set_block(
                     &WorldCoord(placement_x as isize, placement_y as isize, placement_z as isize),
                     input.selected_block,
                     device,
@@ -265,10 +265,10 @@ impl FrameLoopContext {
         // Build UI and store output for rendering
         let mut full_output = ui::build_ui(
             &self.egui_ctx,
-            &self.cam,
+            &self.camera,
             &self.game_state,
             &self.input_state,
-            &self.core,
+            &self.scene,
             render_state.width,
             render_state.height,
             dt,
@@ -304,7 +304,7 @@ impl FrameLoopContext {
             let nw = w.as_f64().unwrap_or(800.0) as u32;
             let nh = h.as_f64().unwrap_or(600.0) as u32;
             if nw != render_state.width || nh != render_state.height {
-                self.cam.borrow_mut().set_aspect(nw, nh);
+                self.camera.borrow_mut().set_aspect(nw, nh);
                 render_state.width = nw;
                 render_state.height = nh;
                 render_state.camera_aspect = nw as f32 / nh as f32;

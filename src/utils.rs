@@ -74,17 +74,20 @@ impl Mesh {
 
 
 
-/// Create outline mesh for block targeting (unit cube at origin)
-pub fn create_outline_mesh() -> Mesh {
+/// Create outline mesh for block targeting and chunk border rendering
+pub fn create_outline_mesh(s: f32) -> Mesh {
+    let color = [1.0, 1.0, 0.3, 1.0];
+
     let verts = vec![
-        Vertex { pos: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [0.0, 0.0] },
-        Vertex { pos: [1.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [1.0, 0.0] },
-        Vertex { pos: [1.0, 1.0, 0.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, 1.0, 0.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [0.0, 1.0] },
-        Vertex { pos: [0.0, 0.0, 1.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [0.0, 0.0] },
-        Vertex { pos: [1.0, 0.0, 1.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [1.0, 0.0] },
-        Vertex { pos: [1.0, 1.0, 1.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, 1.0, 1.0], normal: [0.0, 1.0, 0.0], color: [1.0, 1.0, 0.3, 1.0], uv: [0.0, 1.0] },
+        Vertex { pos: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
+        Vertex { pos: [s, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
+        Vertex { pos: [s, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
+        Vertex { pos: [0.0, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
+
+        Vertex { pos: [0.0, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
+        Vertex { pos: [s, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
+        Vertex { pos: [s, s, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
+        Vertex { pos: [0.0, s, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
     ];
     let indices = vec![
         0, 1, 1, 2, 2, 3, 3, 0, // bottom
@@ -93,36 +96,6 @@ pub fn create_outline_mesh() -> Mesh {
     ];
     
     Mesh { vertices: verts, indices: indices }
-}
-
-/// Create chunk border mesh (edges of a chunk in world space)
-pub fn create_chunk_border_mesh(chunk_size: i32) -> Mesh {
-    let s = chunk_size as f32;
-    let color = [0.2, 0.8, 0.2, 1.0]; // Green for chunk borders
-    
-    let verts = vec![
-        // Bottom face corners
-        Vertex { pos: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
-        Vertex { pos: [s, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
-        Vertex { pos: [s, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
-        // Top face corners
-        Vertex { pos: [0.0, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
-        Vertex { pos: [s, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
-        Vertex { pos: [s, s, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, s, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
-    ];
-    
-    let indices = vec![
-        // Bottom face edges
-        0, 1, 1, 2, 2, 3, 3, 0,
-        // Top face edges
-        4, 5, 5, 6, 6, 7, 7, 4,
-        // Vertical edges
-        0, 4, 1, 5, 2, 6, 3, 7,
-    ];
-    
-    Mesh { vertices: verts, indices }
 }
 
 /// coordinates of a block in world space
