@@ -102,14 +102,24 @@ fn should_render_face(block: Block, neighbor: Block) -> bool {
     false
 }
 
-pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
-    compute_mesh_greedy(blocks, lod, borders)
-    // compute_mesh_naive(blocks, lod, borders)
+pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> (Mesh, Mesh) {
+
+    // GREEDY
+    let opaque_mesh = compute_mesh_greedy(blocks, lod, borders, |b| !b.is_transparent());
+    let transparent_mesh = compute_mesh_greedy(blocks, lod, borders, |b| b.is_transparent());
+    // compute_mesh_greedy(blocks, lod, borders)
+
+    // NAIVE
+    // let opaque_mesh = compute_mesh_naive(blocks, lod, borders, |b| !b.is_transparent());
+    // let transparent_mesh = compute_mesh_naive(blocks, lod, borders, |b| b.is_transparent());
+
+
+    (opaque_mesh, transparent_mesh)
 }
 
 
 /// naive algorithm to compute mesh for every block individually checking if (for testing purposes)
-pub fn compute_mesh_naive(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
+pub fn compute_mesh_naive(blocks: &[Block], lod: u8, borders: &ChunkBorders, block_filter: impl Fn(Block) -> bool) -> Mesh {
     assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
 
     let mut verts = Vec::new();
@@ -124,16 +134,10 @@ pub fn compute_mesh_naive(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> 
             for z in 0..CHUNK_SIZE {
                 
                 let block = blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
-                if block.is_empty() {
+                if block.is_empty() || !block_filter(block) {
                     continue;
                 }
 
-                // 0: +X
-                // 1: -X
-                // 2: +Y
-                // 3: -Y
-                // 4: +Z
-                // 5: -Z
                 for face_dir in 0..6 {
 
                     let neighbor_block = match face_dir {
@@ -249,7 +253,7 @@ pub fn compute_mesh_naive(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> 
 /// * `blocks` - The block array for this chunk
 /// * `lod` - Level of detail (currently only 0 is supported)
 /// * `borders` - Border slices from neighboring chunks for accurate edge culling
-fn compute_mesh_greedy(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mesh {
+fn compute_mesh_greedy(blocks: &[Block], lod: u8, borders: &ChunkBorders, block_filter: impl Fn(Block) -> bool) -> Mesh {
     assert!(lod == 0, "Only LOD 0 meshing is currently implemented");
 
     let mut verts = Vec::new();
@@ -292,7 +296,7 @@ fn compute_mesh_greedy(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> Mes
                     let block = blocks[BlockCoord(x as usize, y as usize, z as usize).get_block_idx()];
 
                     // Render water and solid blocks, skip air
-                    if block.is_empty() { continue; }
+                    if block.is_empty() || !block_filter(block) { continue; }
 
                     // Get neighbor coordinate
                     let (nx, ny, nz) = if back_face {

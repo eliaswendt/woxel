@@ -54,6 +54,7 @@ impl Chunk {
     }
 
 
+    /// Create a chunk that displays its chunk coordinates using blocks (for debugging)
     pub fn new_coord(coord: ChunkCoord) -> Self {
         let mut chunk = Self::new_empty();
 
@@ -158,6 +159,10 @@ impl Chunk {
         self.non_empty_count == 0
     }
 
+    /// Get read-only access to the blocks array for meshing.
+    pub fn get_blocks(&self) -> &[Block] {
+        &self.blocks
+    }
 
     pub fn get_block(&self, coord: &BlockCoord) -> Block {
         self.blocks[coord.get_block_idx()]
@@ -247,16 +252,7 @@ impl Chunk {
         slice
     }
 
-    /// Compute the mesh for this chunk using greedy meshing.
-    /// Delegates to the mesher module.
-    pub fn compute_mesh(&self, lod: u8, borders: &ChunkBorders) -> Mesh {
-        compute_mesh(&self.blocks, lod, borders)
-    }
 
-    /// Get read-only access to the blocks array for meshing.
-    pub fn blocks(&self) -> &[Block] {
-        &self.blocks
-    }
 
     // /// Compute a subsampled version of this chunk for the given LOD level
     // /// Strategy: for each window_size^3 cell, pick the modal block (ignoring air so surface wins),

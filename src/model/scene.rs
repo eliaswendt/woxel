@@ -1,4 +1,4 @@
-use crate::{model::{CHUNK_SIZE, world::{Block, Chunk, ChunkBorders}}, utils::{BlockCoord, ChunkCoord, MeshBuffer, WorldCoord}};
+use crate::{model::{CHUNK_SIZE, world::{Block, Chunk, ChunkBorders, chunk_mesher::compute_mesh}}, utils::{BlockCoord, ChunkCoord, MeshBuffer, WorldCoord}};
 
 use super::world::VoxelDensityGenerator;
 
@@ -48,7 +48,7 @@ pub enum MeshGenerationState {
     Pending,
     Completed {
         lod: u8,
-        buffer: MeshBuffer,
+        buffer: (MeshBuffer, MeshBuffer),
     },
 }
 
@@ -117,9 +117,10 @@ impl ActiveEntry {
     fn generate_and_upload_mesh(&mut self, device: &wgpu::Device, chunk_borders: &ChunkBorders) {
         if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, required_lod, mesh } = self {
             log::debug!("Generating mesh for chunk {:?} at LOD {}", entry_coord, required_lod);
-            let mut new_mesh = active_chunk.compute_mesh(*required_lod, chunk_borders);
-            new_mesh.offset_vertices_by(entry_coord);
-            let new_mesh_buffer = new_mesh.upload(device);
+            let mut new_mesh = compute_mesh(active_chunk.get_blocks(), *required_lod, chunk_borders);
+            new_mesh.0.offset_vertices_by(entry_coord);
+            new_mesh.1.offset_vertices_by(entry_coord);
+            let new_mesh_buffer = (new_mesh.0.upload(device), new_mesh.1.upload(device));
 
             *mesh = MeshGenerationState::Completed { lod: *required_lod, buffer: new_mesh_buffer };
         }
@@ -505,8 +506,8 @@ impl Scene {
         
         for active_entry in &self.active {
             if let ActiveEntry::Loaded { mesh: MeshGenerationState::Completed { buffer, .. }, .. } = active_entry {
-                total_vertices += buffer.vertex_count;
-                total_indices += buffer.index_count;
+                total_vertices += buffer.0.vertex_count + buffer.1.vertex_count;
+                total_indices += buffer.0.index_count + buffer.1.index_count;
             }
         }
         

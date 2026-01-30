@@ -45,6 +45,8 @@ async fn setup_app(
     canvas: &HtmlCanvasElement,
 ) -> Result<(), JsValue> {
     // Initialize GPU
+
+    use crate::{model::CHUNK_SIZE, view::PipelineResources};
     let gpu = GpuContext::new(canvas, 800, 600)
         .await
         .map_err(|e| js_error(format!("GPU init failed: {e:?}")))?;
@@ -90,10 +92,7 @@ async fn setup_app(
     let depth_view_cell: Rc<RefCell<wgpu::TextureView>> = Rc::new(RefCell::new(depth_view));
 
     // Create chunk pipelines
-    let pipes = render::create_chunk_pipelines(gpu.device.as_ref(), gpu.format, &cam_bgl, depth_format);
-    let render_pipeline = pipes.pipeline;
-    let wireframe_pipeline = pipes.wireframe_pipeline;
-    let wireframe_available = wireframe_pipeline.is_some();
+    let PipelineResources { chunk_opaque, chunk_transparent } = render::create_chunk_pipelines(gpu.device.as_ref(), gpu.format, &cam_bgl, depth_format);
 
     // Outline resources
     let outline_res = render::create_outline_resources(gpu.device.as_ref(), gpu.format, &cam_bgl, &cam_buf, depth_format);
@@ -103,7 +102,7 @@ async fn setup_app(
     let outline_pipeline = outline_res.outline_pipeline;
 
     // Create chunk border mesh
-    let chunk_border_mesh = utils::create_chunk_border_mesh(16).upload(gpu.device.as_ref());
+    let chunk_border_mesh = utils::create_outline_mesh(CHUNK_SIZE as f32).upload(gpu.device.as_ref());
 
     // Create transform buffer for outline
     let outline_transform = Rc::new(RefCell::new(TransformUniform {
@@ -132,7 +131,6 @@ async fn setup_app(
         game_state.clone(),
         egui_events.clone(),
         cam.clone(),
-        wireframe_available,
     )?;
 
     // Create render state
@@ -141,8 +139,8 @@ async fn setup_app(
         alpha_mode: gpu.config.alpha_mode,
         width,
         height,
-        pipeline: render_pipeline,
-        wireframe_pipeline: wireframe_pipeline.clone(),
+        chunk_opaque,
+        chunk_transparent,
         outline_pipeline,
         outline_mesh,
         show_outline: false,
@@ -164,13 +162,13 @@ async fn setup_app(
 
     // Setup frame loop
     let mut frame_ctx = FrameLoopContext {
-        cam: cam.clone(),
+        camera: cam.clone(),
         cam_buf: cam_buf.clone(),
         cam_buf_data,
         lighting_buf: lighting_buf.clone(),
         lighting_buf_data,
         depth_view_cell,
-        core: scene,
+        scene,
         input_state,
         game_state,
         camera_controller: CameraController::new(),
@@ -191,7 +189,7 @@ async fn setup_app(
             frame_ctx.update(gpu.device.as_ref(), gpu.queue.as_ref(), &window_for_loop, &gpu.surface, &mut render_state);
             
             // Draw frame
-            let core_borrow = frame_ctx.core.borrow();
+            let core_borrow = frame_ctx.scene.borrow();
             let dv = frame_ctx.depth_view_cell.borrow();
             render_state.draw_frame(
                 gpu.device.as_ref(),
@@ -221,7 +219,6 @@ fn setup_input_listeners(
     game_state: Rc<RefCell<GameState>>,
     egui_events: Rc<RefCell<Vec<egui::Event>>>,
     cam: Rc<RefCell<Camera>>,
-    wireframe_available: bool,
 ) -> Result<(), JsValue> {
     let input_processor = InputProcessor::default();
 
@@ -254,11 +251,7 @@ fn setup_input_listeners(
                 scene.borrow_mut().remesh_all();
                 e.prevent_default();
             } else if input_processor.wants_to_toggle_wireframe(&key) {
-                if wireframe_available {
-                    input_state.borrow_mut().toggle_wireframe();
-                } else {
-                    log::warn!("Wireframe mode not available on WebGPU/WASM");
-                }
+                log::warn!("Wireframe mode not available on WebGPU/WASM");
                 e.prevent_default();
             } else if input_processor.wants_to_toggle_chunk_borders(&key) {
                 input_state.borrow_mut().toggle_chunk_borders();

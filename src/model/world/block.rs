@@ -1,3 +1,8 @@
+enum Translucency {
+    Opaque,
+    Transparent,
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Block {
@@ -106,7 +111,9 @@ impl Block {
     
     /// Returns true if this block is transparent/translucent (can see through it)
     pub fn is_transparent(self) -> bool {
-        matches!(self, Block::Empty | Block::Water| Block::Ice | Block::Cloud)
+        // TODO we always take direction 0 for color alpha check, which may not be accurate for all blocks
+        self.color(0)[3] != 1.0
+        // matches!(self, Block::Empty | Block::Water| Block::Ice | Block::Cloud)
     }
     
     /// Returns surface roughness: 0.0 = glossy/smooth, 1.0 = rough/matte
@@ -170,10 +177,10 @@ impl Block {
             Block::Bedrock => [0.2, 0.2, 0.2, 1.0],
             Block::OakLeaves => [0.2, 0.6, 0.2, 1.0],
             Block::Wood => [0.5, 0.3, 0.1, 1.0],
-            Block::Water => [0.0, 0.1, 0.4, 1.0],
+            Block::Water => [0.0, 0.1, 0.4, 0.9],
             Block::Cloud => [0.95, 0.95, 0.95, 1.0],
             Block::Snow => [0.95, 0.97, 1.0, 1.0],
-            Block::Ice => [0.6, 0.8, 0.95, 1.0],
+            Block::Ice => [0.6, 0.8, 0.95, 0.9],
             Block::CoalOre => [0.3, 0.3, 0.3, 1.0],
             Block::IronOre => [0.7, 0.6, 0.5, 1.0],
             Block::GoldOre => [0.9, 0.8, 0.2, 1.0],
@@ -212,6 +219,6 @@ pub fn face_dir_to_normal(face_dir: u8) -> [f32; 3] {
         3 => [0.0, -1.0, 0.0],  // -Y
         4 => [0.0, 0.0, 1.0],   // +Z
         5 => [0.0, 0.0, -1.0],  // -Z
-        _ => [0.0, 1.0, 0.0],
+        _ => unreachable!()     // [0.0, 1.0, 0.0],
     }
 }

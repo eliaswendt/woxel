@@ -14,8 +14,8 @@ pub struct CameraResources {
 }
 
 pub struct PipelineResources {
-    pub pipeline: wgpu::RenderPipeline,
-    pub wireframe_pipeline: Option<wgpu::RenderPipeline>,
+    pub chunk_opaque: wgpu::RenderPipeline,
+    pub chunk_transparent: wgpu::RenderPipeline,
 }
 
 pub struct OutlineResources {
@@ -39,6 +39,7 @@ pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> (
     let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     (depth_texture, depth_view)
 }
+
 
 pub fn create_camera_resources(device: &wgpu::Device) -> CameraResources {
     let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -92,6 +93,7 @@ pub fn create_camera_resources(device: &wgpu::Device) -> CameraResources {
     CameraResources { camera_buffer, lighting_buffer, bind_group_layout, camera_bind_group }
 }
 
+
 pub fn create_chunk_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -110,8 +112,8 @@ pub fn create_chunk_pipelines(
         push_constant_ranges: &[],
     });
 
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("render_pipeline"),
+    let chunk_opaque = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("chunk_opaque"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
@@ -155,54 +157,54 @@ pub fn create_chunk_pipelines(
         cache: None,
     });
 
-    let wireframe_pipeline = if device.features().contains(wgpu::Features::POLYGON_MODE_LINE) {
-        Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("wireframe_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-                        wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 },
-                        wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x4 },
-                        wgpu::VertexAttribute { offset: 40, shader_location: 3, format: wgpu::VertexFormat::Float32x2 },
-                    ],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Line,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
-            multiview: None,
-            cache: None,
-        }))
-    } else { None };
 
-    PipelineResources { pipeline, wireframe_pipeline }
+    // same as opaque but with depth_write_enabled: false
+    let chunk_transparent = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("chunk_transparent"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
+                    wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32x3 },
+                    wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x4 },
+                    wgpu::VertexAttribute { offset: 40, shader_location: 3, format: wgpu::VertexFormat::Float32x2 },
+                ],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: depth_format,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+        multiview: None,
+        cache: None,
+    });
+
+    PipelineResources { chunk_opaque, chunk_transparent }
 }
 
 pub fn create_outline_resources(
@@ -212,7 +214,7 @@ pub fn create_outline_resources(
     camera_buffer: &wgpu::Buffer,
     depth_format: wgpu::TextureFormat,
 ) -> OutlineResources {
-    let outline_mesh_buffer = Some(create_outline_mesh().upload(device));
+    let outline_mesh_buffer = Some(create_outline_mesh(1.0).upload(device));
 
     let outline_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("outline_transform"),
@@ -317,8 +319,8 @@ pub struct RenderState {
     pub height: u32,
     
     // Pipelines
-    pub pipeline: RenderPipeline,
-    pub wireframe_pipeline: Option<RenderPipeline>,
+    pub chunk_opaque: RenderPipeline,
+    pub chunk_transparent: RenderPipeline,
     pub outline_pipeline: RenderPipeline,
     
     // Meshes
@@ -434,35 +436,8 @@ impl RenderState {
                 occlusion_query_set: None,
             });
 
-            let active_pipeline = if self.wireframe_mode && self.wireframe_pipeline.is_some() {
-                self.wireframe_pipeline.as_ref().unwrap()
-            } else {
-                &self.pipeline
-            };
 
-            rp.set_pipeline(active_pipeline);
-            rp.set_bind_group(0, cam_bg, &[]);
-
-
-            // DRAW CHUNKS with frustum culling
-            for entry in scene_chunks.iter() {
-                // Render mesh if this chunk has one
-                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
-                    if mesh_buffer.index_count == 0 {
-                        continue; // Skip empty meshes
-                    }
-                    
-                    // Frustum culling - skip chunks outside view
-                    if !Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
-                        continue;
-                    }
-                    
-                    rp.set_vertex_buffer(0, mesh_buffer.vertex_buffer.slice(..));
-                    rp.set_index_buffer(mesh_buffer.index_buffer.slice(..), IndexFormat::Uint32);
-                    rp.draw_indexed(0..mesh_buffer.index_count, 0, 0..1);
-                }
-            }
-
+            
             // Render block outline
             if self.show_outline {
                 rp.set_pipeline(&self.outline_pipeline);
@@ -471,6 +446,51 @@ impl RenderState {
                 rp.set_index_buffer(self.outline_mesh.index_buffer.slice(..), IndexFormat::Uint32);
                 rp.draw_indexed(0..self.outline_mesh.index_count, 0, 0..1);
             }
+            
+            
+            // use chunk_opaque pipeline to render chunk borders, outline, and opaque chunks
+            rp.set_pipeline(&self.chunk_opaque);
+            rp.set_bind_group(0, cam_bg, &[]);
+            // DRAW CHUNKS with frustum culling
+            for entry in scene_chunks.iter() {
+                // Render mesh if this chunk has one
+                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
+                    if mesh_buffer.0.index_count == 0 {
+                        continue; // Skip empty meshes
+                    }
+                    
+                    // Frustum culling - skip chunks outside view
+                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
+                        rp.set_vertex_buffer(0, mesh_buffer.0.vertex_buffer.slice(..));
+                        rp.set_index_buffer(mesh_buffer.0.index_buffer.slice(..), IndexFormat::Uint32);
+                        rp.draw_indexed(0..mesh_buffer.0.index_count, 0, 0..1);
+                    }
+                    
+                }
+            }
+
+            // use chunk_transparent pipeline to render transparent chunks
+            rp.set_pipeline(&self.chunk_transparent);
+
+            // DRAW CHUNKS with frustum culling
+            for entry in scene_chunks.iter() {
+                // Render mesh if this chunk has one
+                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
+                    if mesh_buffer.1.index_count == 0 {
+                        continue; // Skip empty meshes
+                    }
+                    
+                    // Frustum culling - skip chunks outside view
+                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
+                        rp.set_vertex_buffer(0, mesh_buffer.1.vertex_buffer.slice(..));
+                        rp.set_index_buffer(mesh_buffer.1.index_buffer.slice(..), IndexFormat::Uint32);
+                        rp.draw_indexed(0..mesh_buffer.1.index_count, 0, 0..1);
+                    }
+                    
+                }
+            }
+
+
         }
 
         // Upload egui textures
