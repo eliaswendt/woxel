@@ -84,14 +84,14 @@ fn draw_crosshair(ctx: &Context, _ppp: f32) {
     );
 }
 
-fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, core: &Rc<RefCell<Scene>>, dt: f32) {
+fn draw_debug_window(ctx: &Context, cam: &Rc<RefCell<Camera>>, game_state: &Rc<RefCell<GameState>>, scene: &Rc<RefCell<Scene>>, dt: f32) {
     let player_pos = game_state.borrow().player_pos;
     let chunk_x = (player_pos.x / CHUNK_SIZE as f32).floor() as i32;
     let chunk_y = (player_pos.y / CHUNK_SIZE as f32).floor() as i32;
     let chunk_z = (player_pos.z / CHUNK_SIZE as f32).floor() as i32;
     
     // Get GPU buffer stats
-    let (total_vertices, total_faces) = core.borrow().get_n_vertices_and_faces();
+    let (total_vertices, total_faces) = scene.borrow().get_n_vertices_and_faces();
 
     egui::Window::new("Debug")
         .default_pos([8.0, 8.0])

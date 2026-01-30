@@ -105,13 +105,13 @@ fn should_render_face(block: Block, neighbor: Block) -> bool {
 pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> (Mesh, Mesh) {
 
     // GREEDY
-    let opaque_mesh = compute_mesh_greedy(blocks, lod, borders, |b| !b.is_transparent());
-    let transparent_mesh = compute_mesh_greedy(blocks, lod, borders, |b| b.is_transparent());
+    // let opaque_mesh = compute_mesh_greedy(blocks, lod, borders, |b| !b.is_transparent());
+    // let transparent_mesh = compute_mesh_greedy(blocks, lod, borders, |b| b.is_transparent());
     // compute_mesh_greedy(blocks, lod, borders)
 
     // NAIVE
-    // let opaque_mesh = compute_mesh_naive(blocks, lod, borders, |b| !b.is_transparent());
-    // let transparent_mesh = compute_mesh_naive(blocks, lod, borders, |b| b.is_transparent());
+    let opaque_mesh = compute_mesh_naive(blocks, lod, borders, |b| !b.is_transparent());
+    let transparent_mesh = compute_mesh_naive(blocks, lod, borders, |b| b.is_transparent());
 
 
     (opaque_mesh, transparent_mesh)

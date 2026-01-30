@@ -180,7 +180,7 @@ impl Block {
             Block::Water => [0.0, 0.1, 0.4, 0.9],
             Block::Cloud => [0.95, 0.95, 0.95, 1.0],
             Block::Snow => [0.95, 0.97, 1.0, 1.0],
-            Block::Ice => [0.6, 0.8, 0.95, 0.9],
+            Block::Ice => [0.6, 0.8, 0.95, 1.0],
             Block::CoalOre => [0.3, 0.3, 0.3, 1.0],
             Block::IronOre => [0.7, 0.6, 0.5, 1.0],
             Block::GoldOre => [0.9, 0.8, 0.2, 1.0],
