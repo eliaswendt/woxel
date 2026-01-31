@@ -27,7 +27,7 @@ impl GameState {
             player_pitch: 0.0,
             player_active: false,
             camera_follows_player: true,
-            render_distance: [10, 32, 10],
+            render_distance: [20, 16, 20],
             render_distance_changed: false,
             compute_budget: 15,
             day_cycle_seconds: 300.0,  // 5 minute day cycle by default
