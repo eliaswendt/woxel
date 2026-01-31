@@ -441,8 +441,9 @@ impl RenderState {
         
             
             // determine player position
-            let player_position = WorldCoord(self.player_pos[0] as isize, self.player_pos[1] as isize, self.player_pos[2] as isize).to_chunk_coord();
-            
+            let player_world_position = WorldCoord(self.player_pos[0] as isize, self.player_pos[1] as isize, self.player_pos[2] as isize);
+            let player_chunk_position = player_world_position.to_chunk_coord();
+
             // Borrow scene for rendering
             let scene_borrow = scene.borrow();
 
@@ -453,7 +454,7 @@ impl RenderState {
             // iterate chunks from nearest to farthest (for z-buffer efficiency)
             for i in 0..scene_borrow.spherical_order.len() {
                 let (offset, _) = scene_borrow.spherical_order[i];
-                let chunk_position = player_position.add(&offset);
+                let chunk_position = player_chunk_position.add(&offset);
                 let entry = scene_borrow.get_active_entry(&chunk_position);
                 
                 if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque, transparent: _ }, .. } = entry {
@@ -461,7 +462,7 @@ impl RenderState {
                         log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
                     }
                     else {
-                        log::debug!("Position match for chunk {:?}", chunk_coord);
+                        log::debug!("Chunk position match for chunk {:?}", chunk_coord);
                     }
 
                     if opaque.is_empty(){
@@ -485,14 +486,14 @@ impl RenderState {
             // DRAW CHUNKS with frustum culling
             for i in (0..scene_borrow.spherical_order.len()).rev() {
                 let (offset, _) = scene_borrow.spherical_order[i];
-                let chunk_position = player_position.add(&offset);
+                let chunk_position = player_chunk_position.add(&offset);
                 let entry = scene_borrow.get_active_entry(&chunk_position);
                 // Render mesh if this chunk has one
                 if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque: _, transparent }, .. } = entry {
                     if chunk_position != *chunk_coord {
                         log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
                     } else {
-                        log::debug!("Position match for chunk {:?}", chunk_coord);
+                        log::debug!("Chunk position match for chunk {:?}", chunk_coord);
                     }
 
                     if transparent.is_empty() {
@@ -510,17 +511,17 @@ impl RenderState {
 
 
 
-            if self.show_chunk_borders || true {
-                let color = [0.0, 0.0, 0.0, 1.0];
-                let outline = generate_outline_mesh(CHUNK_SIZE as f32, color).offset_vertices_by(&player_position.to_world_coord()).upload(device);
+            // if self.show_chunk_borders || true {
+            //     let color = [0.0, 0.0, 0.0, 1.0];
+            //     let outline = generate_outline_mesh(CHUNK_SIZE as f32, color).offset_vertices_by(&player_chunk_position.to_world_coord()).upload(device);
 
-                // render chunk outline
-                rp.set_pipeline(&self.pipeline_outline);
-                rp.set_bind_group(0, outline_bg, &[]);
-                rp.set_vertex_buffer(0, outline.vertex_buffer.slice(..));
-                rp.set_index_buffer(outline.index_buffer.slice(..), IndexFormat::Uint32);
-                rp.draw_indexed(0..outline.index_count, 0, 0..1);
-            }
+            //     // render chunk outline
+            //     rp.set_pipeline(&self.pipeline_outline);
+            //     rp.set_bind_group(0, outline_bg, &[]);
+            //     rp.set_vertex_buffer(0, outline.vertex_buffer.slice(..));
+            //     rp.set_index_buffer(outline.index_buffer.slice(..), IndexFormat::Uint32);
+            //     rp.draw_indexed(0..outline.index_count, 0, 0..1);
+            // }
 
             // Render block outline
             if self.show_block_outline {
