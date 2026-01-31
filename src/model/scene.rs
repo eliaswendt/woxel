@@ -23,16 +23,15 @@ fn select_lod(distance_to_player: usize) -> u8 {
 /// pre-compute sphere offsets for chunk loading order
 fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<(ChunkCoord, usize)> {
 
-    let radius = [
-        (active_size[0] / 2) as isize,
-        (active_size[1] / 2) as isize,
-        (active_size[2] / 2) as isize,
-    ];
-
     let mut offsets = Vec::new();
-    for x in -radius[0]..=radius[0] {
-        for y in -radius[1]..=radius[1] {
-            for z in -radius[2]..=radius[2] {
+
+    for x in 0..active_size[0] {
+        for y in 0..active_size[1] {
+            for z in 0..active_size[2] {
+                let x = x as isize - (active_size[0] as isize / 2);
+                let y = y as isize - (active_size[1] as isize / 2);
+                let z = z as isize - (active_size[2] as isize / 2);
+
                 let dist = (x.pow(2) + y.pow(2) + z.pow(2)).isqrt() as usize;
                 offsets.push((ChunkCoord(x, y, z), dist));
             }
@@ -74,10 +73,6 @@ pub enum ActiveEntry {
 }
 
 impl ActiveEntry {
-    fn is_loaded(&self) -> bool {
-        matches!(self, ActiveEntry::Loaded { .. })
-    }
-
     fn is_empty(&self) -> bool {
         matches!(self, ActiveEntry::Empty { .. })
     }
@@ -147,7 +142,7 @@ pub struct Scene {
     /// Number of chunks along each axis in the active chunk grid
     active_size: [usize; 3],
     previous_player_coord: ChunkCoord,
-    pub spherical_order: Vec<(ChunkCoord, usize)>,
+    pub offsets: Vec<(ChunkCoord, usize)>,
 
     density_generator: VoxelDensityGenerator,
 }
@@ -168,7 +163,7 @@ impl Scene {
             active: active,
             previous_player_coord: ChunkCoord(0, 0, 0),
 
-            spherical_order: generate_qube_offset_in_spherical_order(active_size),
+            offsets: generate_qube_offset_in_spherical_order(active_size),
             density_generator: VoxelDensityGenerator::new(),
         }
     }
@@ -417,20 +412,20 @@ impl Scene {
     }
 
 
-    fn generate_pending_chunks(&mut self, player_position: &ChunkCoord, chunk_generation_budget: usize) -> usize {
+    fn generate_pending_chunks(&mut self, player_chunk_position: &ChunkCoord, chunk_generation_budget: usize) -> usize {
         let mut used_chunk_generation_budget = 0;
 
         // iterate in order of distance from player
         // Use index-based iteration to avoid cloning the entire Vec each frame
-        for i in 0..self.spherical_order.len() {
+        for i in 0..self.offsets.len() {
             if used_chunk_generation_budget >= chunk_generation_budget {
                 break;
             }
 
-            let (offset, distance) = self.spherical_order[i];
+            let (offset, distance) = self.offsets[i];
 
             let required_lod = select_lod(distance);
-            let chunk_coord = player_position.add(&offset);
+            let chunk_coord = player_chunk_position.add(&offset);
             
             if self.get_active_entry(&chunk_coord).is_pending() {
 
@@ -472,12 +467,12 @@ impl Scene {
 
         // iterate in order of distance from player
         // Use index-based iteration to avoid cloning the entire Vec each frame
-        for i in 0..self.spherical_order.len() {
+        for i in 0..self.offsets.len() {
             if used_mesh_generation_budget >= mesh_generation_budget {
                 break;
             }
 
-            let (offset, _) = self.spherical_order[i];
+            let (offset, _) = self.offsets[i];
             let chunk_coord = player_position.add(&offset);
 
             if self.get_active_entry(&chunk_coord).needs_remesh() {

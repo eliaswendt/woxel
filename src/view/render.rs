@@ -452,18 +452,19 @@ impl RenderState {
             // use chunk_opaque pipeline to render chunk borders, outline, and opaque chunks
             
             // iterate chunks from nearest to farthest (for z-buffer efficiency)
-            for i in 0..scene_borrow.spherical_order.len() {
-                let (offset, _) = scene_borrow.spherical_order[i];
+            for i in 0..scene_borrow.offsets.len() {
+                let (offset, _) = scene_borrow.offsets[i];
                 let chunk_position = player_chunk_position.add(&offset);
                 let entry = scene_borrow.get_active_entry(&chunk_position);
                 
                 if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque, transparent: _ }, .. } = entry {
-                    if chunk_position != *chunk_coord {
-                        log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
-                    }
-                    else {
-                        log::debug!("Chunk position match for chunk {:?}", chunk_coord);
-                    }
+                    // if chunk_position != *chunk_coord {
+                    // happens if offsets contains more entries than actual loaded chunks (happens due to /2 rounding in offset generation)
+                    //     log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
+                    // }
+                    // else {
+                    //     log::debug!("Chunk position match for chunk {:?}", chunk_coord);
+                    // }
 
                     if opaque.is_empty(){
                         continue; // Skip empty meshes
@@ -484,17 +485,18 @@ impl RenderState {
             rp.set_bind_group(0, cam_bg, &[]);
 
             // DRAW CHUNKS with frustum culling
-            for i in (0..scene_borrow.spherical_order.len()).rev() {
-                let (offset, _) = scene_borrow.spherical_order[i];
+            for i in (0..scene_borrow.offsets.len()).rev() {
+                let (offset, _) = scene_borrow.offsets[i];
                 let chunk_position = player_chunk_position.add(&offset);
                 let entry = scene_borrow.get_active_entry(&chunk_position);
                 // Render mesh if this chunk has one
                 if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque: _, transparent }, .. } = entry {
-                    if chunk_position != *chunk_coord {
-                        log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
-                    } else {
-                        log::debug!("Chunk position match for chunk {:?}", chunk_coord);
-                    }
+                    // if chunk_position != *chunk_coord {
+                    // happens if offsets contains more entries than actual loaded chunks (happens due to /2 rounding in offset generation)
+                    //     log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
+                    // } else {
+                    //     log::debug!("Chunk position match for chunk {:?}", chunk_coord);
+                    // }
 
                     if transparent.is_empty() {
                         continue; // Skip empty meshes
