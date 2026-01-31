@@ -1,4 +1,5 @@
 use crate::model::CHUNK_SIZE;
+use egui::epaint::color;
 use wgpu::util::DeviceExt;
 use bytemuck::{NoUninit};
 
@@ -16,6 +17,11 @@ pub struct MeshBuffer {
     pub index_buffer: wgpu::Buffer,
     pub vertex_count: u32,
     pub index_count: u32,
+}
+impl MeshBuffer {
+    pub fn is_empty(&self) -> bool {
+        self.vertex_count == 0 || self.index_count == 0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -37,13 +43,17 @@ impl Mesh {
     }
 
     // scale and offset vertices 
-    pub fn offset_vertices_by(&mut self, coord: &ChunkCoord) {
+    pub fn offset_vertices_by(&self, offset: &WorldCoord) -> Self {
+        
+        let mut vertices = Vec::with_capacity(self.vertices.len());
 
-        let coord = coord.to_world_coord();
-        for v in self.vertices.iter_mut() {
-            v.pos[0] = coord.0 as f32 + v.pos[0];
-            v.pos[1] = coord.1 as f32 + v.pos[1];
-            v.pos[2] = coord.2 as f32 + v.pos[2];
+        for vertex in self.vertices.iter() {
+            vertices.push(Vertex { pos: [offset.0 as f32 + vertex.pos[0], offset.1 as f32 + vertex.pos[1], offset.2 as f32 + vertex.pos[2]], normal: vertex.normal, color: vertex.color, uv: vertex.uv });
+        }
+
+        Self {
+            vertices,
+            indices: self.indices.clone(),
         }
     }
 
@@ -75,24 +85,29 @@ impl Mesh {
 
 
 /// Create outline mesh for block targeting and chunk border rendering
-pub fn create_outline_mesh(s: f32) -> Mesh {
-    let color = [1.0, 1.0, 0.3, 1.0];
+pub fn generate_outline_mesh(size: f32, color: [f32; 4]) -> Mesh {
 
     let verts = vec![
         Vertex { pos: [0.0, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
-        Vertex { pos: [s, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
-        Vertex { pos: [s, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, s, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
+        Vertex { pos: [size, 0.0, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
+        Vertex { pos: [size, size, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
+        Vertex { pos: [0.0, size, 0.0], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
 
-        Vertex { pos: [0.0, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
-        Vertex { pos: [s, 0.0, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
-        Vertex { pos: [s, s, s], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
-        Vertex { pos: [0.0, s, s], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
+        Vertex { pos: [0.0, 0.0, size], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 0.0] },
+        Vertex { pos: [size, 0.0, size], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 0.0] },
+        Vertex { pos: [size, size, size], normal: [0.0, 1.0, 0.0], color, uv: [1.0, 1.0] },
+        Vertex { pos: [0.0, size, size], normal: [0.0, 1.0, 0.0], color, uv: [0.0, 1.0] },
     ];
+
     let indices = vec![
-        0, 1, 1, 2, 2, 3, 3, 0, // bottom
-        4, 5, 5, 6, 6, 7, 7, 4, // top
-        0, 4, 1, 5, 2, 6, 3, 7, // sides
+        0, 1, 1,
+        2, 2, 3,
+        3, 0, 4,
+        5, 5, 6,
+        6, 7, 7,
+        4, 0, 4,
+        1, 5, 2,
+        6, 3, 7,
     ];
     
     Mesh { vertices: verts, indices: indices }
@@ -140,6 +155,15 @@ impl ChunkCoord {
             self.0 * CHUNK_SIZE as isize,
             self.1 * CHUNK_SIZE as isize,
             self.2 * CHUNK_SIZE as isize,
+        )
+    }
+
+    /// impl addition for ChunkCoord
+    pub fn add(&self, other: &ChunkCoord) -> ChunkCoord {
+        ChunkCoord(
+            self.0 + other.0,
+            self.1 + other.1,
+            self.2 + other.2,
         )
     }
 }

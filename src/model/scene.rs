@@ -21,7 +21,7 @@ fn select_lod(distance_to_player: usize) -> u8 {
 
 
 /// pre-compute sphere offsets for chunk loading order
-fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<((isize, isize, isize), usize)> {
+fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<(ChunkCoord, usize)> {
 
     let radius = [
         (active_size[0] / 2) as isize,
@@ -34,7 +34,7 @@ fn generate_qube_offset_in_spherical_order(active_size: [usize; 3]) -> Vec<((isi
         for y in -radius[1]..=radius[1] {
             for z in -radius[2]..=radius[2] {
                 let dist = (x.pow(2) + y.pow(2) + z.pow(2)).isqrt() as usize;
-                offsets.push(((x, y, z), dist));
+                offsets.push((ChunkCoord(x, y, z), dist));
             }
         }
     }
@@ -48,7 +48,8 @@ pub enum MeshGenerationState {
     Pending,
     Completed {
         lod: u8,
-        buffer: (MeshBuffer, MeshBuffer),
+        opaque: MeshBuffer,
+        transparent: MeshBuffer, 
     },
 }
 
@@ -115,14 +116,18 @@ impl ActiveEntry {
     }
 
     fn generate_and_upload_mesh(&mut self, device: &wgpu::Device, chunk_borders: &ChunkBorders) {
-        if let ActiveEntry::Loaded { coord: entry_coord, chunk: active_chunk, required_lod, mesh } = self {
-            log::debug!("Generating mesh for chunk {:?} at LOD {}", entry_coord, required_lod);
-            let mut new_mesh = compute_mesh(active_chunk.get_blocks(), *required_lod, chunk_borders);
-            new_mesh.0.offset_vertices_by(entry_coord);
-            new_mesh.1.offset_vertices_by(entry_coord);
-            let new_mesh_buffer = (new_mesh.0.upload(device), new_mesh.1.upload(device));
-
-            *mesh = MeshGenerationState::Completed { lod: *required_lod, buffer: new_mesh_buffer };
+        if let ActiveEntry::Loaded { coord, chunk: active_chunk, required_lod, mesh } = self {
+            log::debug!("Generating mesh for chunk {:?} at LOD {}", coord, required_lod);
+            
+            let offset = coord.to_world_coord();
+            
+            let new_mesh = compute_mesh(active_chunk.get_blocks(), *required_lod, chunk_borders);
+            
+            *mesh = MeshGenerationState::Completed {
+                lod: *required_lod, 
+                opaque: new_mesh.opaque.offset_vertices_by(&offset).upload(device), 
+                transparent: new_mesh.transparent.offset_vertices_by(&offset).upload(device), 
+            };
         }
     }
 }
@@ -142,7 +147,7 @@ pub struct Scene {
     /// Number of chunks along each axis in the active chunk grid
     active_size: [usize; 3],
     previous_player_coord: ChunkCoord,
-    sphere_offsets: Vec<((isize, isize, isize), usize)>,
+    pub spherical_order: Vec<(ChunkCoord, usize)>,
 
     density_generator: VoxelDensityGenerator,
 }
@@ -163,7 +168,7 @@ impl Scene {
             active: active,
             previous_player_coord: ChunkCoord(0, 0, 0),
 
-            sphere_offsets: generate_qube_offset_in_spherical_order(active_size),
+            spherical_order: generate_qube_offset_in_spherical_order(active_size),
             density_generator: VoxelDensityGenerator::new(),
         }
     }
@@ -175,7 +180,7 @@ impl Scene {
         coord.2.rem_euclid(self.active_size[2] as isize) as usize * self.active_size[0] * self.active_size[1] 
     }
 
-    fn get_active_entry(&self, coord: &ChunkCoord) -> &ActiveEntry {
+    pub fn get_active_entry(&self, coord: &ChunkCoord) -> &ActiveEntry {
         &self.active[self.get_active_idx(coord)]
     }
 
@@ -313,16 +318,14 @@ impl Scene {
 
 
     // gets called in each frame
-    pub fn update(&mut self, player_position: &WorldCoord, device: &wgpu::Device, max_n_chunk_generations: usize, max_n_mesh_generations: usize) -> (usize, usize) {
-
-        let position = player_position.to_chunk_coord();
+    pub fn update(&mut self, player_position: &ChunkCoord, device: &wgpu::Device, max_n_chunk_generations: usize, max_n_mesh_generations: usize) -> (usize, usize) {
 
         // Update sliding chunk window based on player position
         // this is almost free, as it only updates indices and does not generate anything
-        self.slide_active_window(position);
+        self.slide_active_window(player_position);
         
-        let n_chunk_generations = self.generate_pending_chunks(&position, max_n_chunk_generations);
-        let n_mesh_generations = self.generate_pending_meshes(&position, device, max_n_mesh_generations);
+        let n_chunk_generations = self.generate_pending_chunks(&player_position, max_n_chunk_generations);
+        let n_mesh_generations = self.generate_pending_meshes(&player_position, device, max_n_mesh_generations);
 
         (n_chunk_generations, n_mesh_generations)
     }
@@ -331,7 +334,7 @@ impl Scene {
     /// Update loaded chunks based on player movement
     /// Uses modulo-based indexing to implement a sliding 3D array around the player
     /// Only loads "surface" layers of chunks in the direction of movement
-    fn slide_active_window(&mut self, new_player_coord: ChunkCoord) {
+    fn slide_active_window(&mut self, new_player_coord: &ChunkCoord) {
         
         // Find in which direction(s) the player moved
         let deltas = [
@@ -410,28 +413,24 @@ impl Scene {
             }
         }
 
-        self.previous_player_coord = new_player_coord;
+        self.previous_player_coord = *new_player_coord;
     }
 
 
-    fn generate_pending_chunks(&mut self, position: &ChunkCoord, chunk_generation_budget: usize) -> usize {
+    fn generate_pending_chunks(&mut self, player_position: &ChunkCoord, chunk_generation_budget: usize) -> usize {
         let mut used_chunk_generation_budget = 0;
 
         // iterate in order of distance from player
         // Use index-based iteration to avoid cloning the entire Vec each frame
-        for i in 0..self.sphere_offsets.len() {
+        for i in 0..self.spherical_order.len() {
             if used_chunk_generation_budget >= chunk_generation_budget {
                 break;
             }
 
-            let ((offset_x, offset_y, offset_z), distance) = self.sphere_offsets[i];
+            let (offset, distance) = self.spherical_order[i];
 
             let required_lod = select_lod(distance);
-            let chunk_coord = ChunkCoord(
-                position.0 + offset_x,
-                position.1 + offset_y,
-                position.2 + offset_z,
-            ); 
+            let chunk_coord = player_position.add(&offset);
             
             if self.get_active_entry(&chunk_coord).is_pending() {
 
@@ -467,24 +466,19 @@ impl Scene {
     }
 
 
-    fn generate_pending_meshes(&mut self, position: &ChunkCoord, device: &wgpu::Device, mesh_generation_budget: usize) -> usize {
+    fn generate_pending_meshes(&mut self, player_position: &ChunkCoord, device: &wgpu::Device, mesh_generation_budget: usize) -> usize {
 
         let mut used_mesh_generation_budget = 0;
 
         // iterate in order of distance from player
         // Use index-based iteration to avoid cloning the entire Vec each frame
-        for i in 0..self.sphere_offsets.len() {
+        for i in 0..self.spherical_order.len() {
             if used_mesh_generation_budget >= mesh_generation_budget {
                 break;
             }
 
-            let ((offset_x, offset_y, offset_z), _) = self.sphere_offsets[i];
-            
-            let chunk_coord = ChunkCoord(
-                position.0 + offset_x,
-                position.1 + offset_y,
-                position.2 + offset_z,
-            ); 
+            let (offset, _) = self.spherical_order[i];
+            let chunk_coord = player_position.add(&offset);
 
             if self.get_active_entry(&chunk_coord).needs_remesh() {
                 // collect borders here before borrowing self mutably
@@ -505,9 +499,9 @@ impl Scene {
         let mut total_indices = 0;
         
         for active_entry in &self.active {
-            if let ActiveEntry::Loaded { mesh: MeshGenerationState::Completed { buffer, .. }, .. } = active_entry {
-                total_vertices += buffer.0.vertex_count + buffer.1.vertex_count;
-                total_indices += buffer.0.index_count + buffer.1.index_count;
+            if let ActiveEntry::Loaded { mesh: MeshGenerationState::Completed { lod, opaque, transparent } , ..} = active_entry {
+                total_vertices += opaque.vertex_count + transparent.vertex_count;
+                total_indices += opaque.index_count + transparent.index_count;
             }
         }
         

@@ -138,7 +138,7 @@ impl FrameLoopContext {
         }
 
         self.scene.borrow_mut().update(
-            &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize),
+            &WorldCoord(p_pos.x as isize, p_pos.y as isize, p_pos.z as isize).to_chunk_coord(),
             device,
             compute_budget as usize,
             (compute_budget / 2) as usize,
@@ -200,7 +200,7 @@ impl FrameLoopContext {
 
             log::debug!("Raycast hit block at ({}, {}, {})", bx, by, bz);
 
-            render_state.show_outline = true;
+            render_state.show_block_outline = true;
 
             // Handle block removal (left click) and placement (right click)
             let input = self.input_state.borrow();
@@ -242,7 +242,7 @@ impl FrameLoopContext {
             drop(input);
         } else {
             *self.raycast_target.borrow_mut() = None;
-            render_state.show_outline = false;
+            render_state.show_block_outline = false;
         }
 
         // Update render state with game state data

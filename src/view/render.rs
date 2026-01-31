@@ -1,7 +1,10 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use wgpu::*;
 use wgpu::util::DeviceExt;
-use crate::model::Camera;
-use crate::utils::{ChunkCoord, MeshBuffer, Vertex, create_outline_mesh};
+use crate::model::{CHUNK_SIZE, Camera, Scene};
+use crate::utils::{ChunkCoord, MeshBuffer, Vertex, WorldCoord, generate_outline_mesh};
 use glam::Vec3;
 use crate::model::scene::{ActiveEntry, MeshGenerationState};
 
@@ -207,6 +210,7 @@ pub fn create_chunk_pipelines(
     PipelineResources { chunk_opaque, chunk_transparent }
 }
 
+
 pub fn create_outline_resources(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -214,7 +218,7 @@ pub fn create_outline_resources(
     camera_buffer: &wgpu::Buffer,
     depth_format: wgpu::TextureFormat,
 ) -> OutlineResources {
-    let outline_mesh_buffer = Some(create_outline_mesh(1.0).upload(device));
+    let outline_mesh_buffer = Some(generate_outline_mesh(1.0, [1.0, 1.0, 0.3, 1.0]).upload(device));
 
     let outline_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("outline_transform"),
@@ -319,14 +323,13 @@ pub struct RenderState {
     pub height: u32,
     
     // Pipelines
-    pub chunk_opaque: RenderPipeline,
-    pub chunk_transparent: RenderPipeline,
-    pub outline_pipeline: RenderPipeline,
+    pub pipeline_opaque: RenderPipeline,
+    pub pipeline_transparent: RenderPipeline,
+    pub pipeline_outline: RenderPipeline,
     
     // Meshes
-    pub outline_mesh: MeshBuffer,
-    pub show_outline: bool,
-    pub chunk_border_mesh: MeshBuffer,
+    pub block_outline: MeshBuffer,
+    pub show_block_outline: bool,
     pub show_chunk_borders: bool,
     
     // Camera state
@@ -352,11 +355,10 @@ impl RenderState {
         device: &Device,
         queue: &Queue,
         surface: &Surface,
-        scene_chunks: &Vec<ActiveEntry>,
+        scene: &Rc<RefCell<Scene>>,
         depth_view: &TextureView,
         cam_bg: &BindGroup,
         outline_bg: &BindGroup,
-        chunk_size: f32,
     ) {
         // Pre-compute frustum planes once for culling
         let frustum_planes = Camera::frustum_planes(
@@ -436,60 +438,99 @@ impl RenderState {
                 occlusion_query_set: None,
             });
 
+        
+            
+            // determine player position
+            let player_position = WorldCoord(self.player_pos[0] as isize, self.player_pos[1] as isize, self.player_pos[2] as isize).to_chunk_coord();
+            
+            // Borrow scene for rendering
+            let scene_borrow = scene.borrow();
 
-            
-            // Render block outline
-            if self.show_outline {
-                rp.set_pipeline(&self.outline_pipeline);
-                rp.set_bind_group(0, outline_bg, &[]);
-                rp.set_vertex_buffer(0, self.outline_mesh.vertex_buffer.slice(..));
-                rp.set_index_buffer(self.outline_mesh.index_buffer.slice(..), IndexFormat::Uint32);
-                rp.draw_indexed(0..self.outline_mesh.index_count, 0, 0..1);
-            }
-            
-            
-            // use chunk_opaque pipeline to render chunk borders, outline, and opaque chunks
-            rp.set_pipeline(&self.chunk_opaque);
+            rp.set_pipeline(&self.pipeline_opaque);
             rp.set_bind_group(0, cam_bg, &[]);
-            // DRAW CHUNKS with frustum culling
-            for entry in scene_chunks.iter() {
-                // Render mesh if this chunk has one
-                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
-                    if mesh_buffer.0.index_count == 0 {
+            // use chunk_opaque pipeline to render chunk borders, outline, and opaque chunks
+            
+            // iterate chunks from nearest to farthest (for z-buffer efficiency)
+            for i in 0..scene_borrow.spherical_order.len() {
+                let (offset, _) = scene_borrow.spherical_order[i];
+                let chunk_position = player_position.add(&offset);
+                let entry = scene_borrow.get_active_entry(&chunk_position);
+                
+                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque, transparent: _ }, .. } = entry {
+                    if chunk_position != *chunk_coord {
+                        log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
+                    }
+                    else {
+                        log::debug!("Position match for chunk {:?}", chunk_coord);
+                    }
+
+                    if opaque.is_empty(){
                         continue; // Skip empty meshes
                     }
                     
                     // Frustum culling - skip chunks outside view
-                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
-                        rp.set_vertex_buffer(0, mesh_buffer.0.vertex_buffer.slice(..));
-                        rp.set_index_buffer(mesh_buffer.0.index_buffer.slice(..), IndexFormat::Uint32);
-                        rp.draw_indexed(0..mesh_buffer.0.index_count, 0, 0..1);
-                    }
-                    
+                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, CHUNK_SIZE as f32) {
+                        rp.set_vertex_buffer(0, opaque.vertex_buffer.slice(..));
+                        rp.set_index_buffer(opaque.index_buffer.slice(..), IndexFormat::Uint32);
+                        rp.draw_indexed(0..opaque.index_count, 0, 0..1);
+                    }   
                 }
             }
+
 
             // use chunk_transparent pipeline to render transparent chunks
-            rp.set_pipeline(&self.chunk_transparent);
+            rp.set_pipeline(&self.pipeline_transparent);
+            rp.set_bind_group(0, cam_bg, &[]);
 
             // DRAW CHUNKS with frustum culling
-            for entry in scene_chunks.iter() {
+            for i in (0..scene_borrow.spherical_order.len()).rev() {
+                let (offset, _) = scene_borrow.spherical_order[i];
+                let chunk_position = player_position.add(&offset);
+                let entry = scene_borrow.get_active_entry(&chunk_position);
                 // Render mesh if this chunk has one
-                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { buffer: mesh_buffer, .. }, .. } = entry {
-                    if mesh_buffer.1.index_count == 0 {
+                if let ActiveEntry::Loaded { coord: chunk_coord, mesh: MeshGenerationState::Completed { lod: _, opaque: _, transparent }, .. } = entry {
+                    if chunk_position != *chunk_coord {
+                        log::warn!("Chunk position mismatch: expected {:?}, got {:?}", chunk_position, chunk_coord);
+                    } else {
+                        log::debug!("Position match for chunk {:?}", chunk_coord);
+                    }
+
+                    if transparent.is_empty() {
                         continue; // Skip empty meshes
                     }
                     
                     // Frustum culling - skip chunks outside view
-                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, chunk_size) {
-                        rp.set_vertex_buffer(0, mesh_buffer.1.vertex_buffer.slice(..));
-                        rp.set_index_buffer(mesh_buffer.1.index_buffer.slice(..), IndexFormat::Uint32);
-                        rp.draw_indexed(0..mesh_buffer.1.index_count, 0, 0..1);
+                    if Self::is_chunk_visible(&frustum_planes, chunk_coord, CHUNK_SIZE as f32) {
+                        rp.set_vertex_buffer(0, transparent.vertex_buffer.slice(..));
+                        rp.set_index_buffer(transparent.index_buffer.slice(..), IndexFormat::Uint32);
+                        rp.draw_indexed(0..transparent.index_count, 0, 0..1);
                     }
-                    
                 }
             }
 
+
+
+            if self.show_chunk_borders || true {
+                let color = [0.0, 0.0, 0.0, 1.0];
+                let outline = generate_outline_mesh(CHUNK_SIZE as f32, color).offset_vertices_by(&player_position.to_world_coord()).upload(device);
+
+                // render chunk outline
+                rp.set_pipeline(&self.pipeline_outline);
+                rp.set_bind_group(0, outline_bg, &[]);
+                rp.set_vertex_buffer(0, outline.vertex_buffer.slice(..));
+                rp.set_index_buffer(outline.index_buffer.slice(..), IndexFormat::Uint32);
+                rp.draw_indexed(0..outline.index_count, 0, 0..1);
+            }
+
+            // Render block outline
+            if self.show_block_outline {
+
+                rp.set_pipeline(&self.pipeline_outline);
+                rp.set_bind_group(0, outline_bg, &[]);
+                rp.set_vertex_buffer(0, self.block_outline.vertex_buffer.slice(..));
+                rp.set_index_buffer(self.block_outline.index_buffer.slice(..), IndexFormat::Uint32);
+                rp.draw_indexed(0..self.block_outline.index_count, 0, 0..1);
+            }
 
         }
 

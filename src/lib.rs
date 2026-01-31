@@ -92,17 +92,14 @@ async fn setup_app(
     let depth_view_cell: Rc<RefCell<wgpu::TextureView>> = Rc::new(RefCell::new(depth_view));
 
     // Create chunk pipelines
-    let PipelineResources { chunk_opaque, chunk_transparent } = render::create_chunk_pipelines(gpu.device.as_ref(), gpu.format, &cam_bgl, depth_format);
+    let PipelineResources { chunk_opaque: pipeline_opaque, chunk_transparent: pipeline_transparent } = render::create_chunk_pipelines(gpu.device.as_ref(), gpu.format, &cam_bgl, depth_format);
 
     // Outline resources
     let outline_res = render::create_outline_resources(gpu.device.as_ref(), gpu.format, &cam_bgl, &cam_buf, depth_format);
     let outline_mesh = outline_res.outline_mesh_buffer.unwrap();
     let outline_buf = outline_res.outline_buffer;
     let outline_bg = outline_res.outline_bind_group;
-    let outline_pipeline = outline_res.outline_pipeline;
-
-    // Create chunk border mesh
-    let chunk_border_mesh = utils::create_outline_mesh(CHUNK_SIZE as f32).upload(gpu.device.as_ref());
+    let pipeline_outline = outline_res.outline_pipeline;
 
     // Create transform buffer for outline
     let outline_transform = Rc::new(RefCell::new(TransformUniform {
@@ -139,13 +136,15 @@ async fn setup_app(
         alpha_mode: gpu.config.alpha_mode,
         width,
         height,
-        chunk_opaque,
-        chunk_transparent,
-        outline_pipeline,
-        outline_mesh,
-        show_outline: false,
-        chunk_border_mesh,
+
+        pipeline_opaque,
+        pipeline_transparent,
+        pipeline_outline,
+
+        block_outline: outline_mesh,
+        show_block_outline: false,
         show_chunk_borders: false,
+
         player_pos: Vec3::new(8.0, 80.0, 8.0),
         camera_yaw: 0.0,
         camera_pitch: 0.0,
@@ -153,6 +152,7 @@ async fn setup_app(
         camera_fov_y: cam.borrow().fov_y,
         camera_z_near: cam.borrow().z_near,
         camera_z_far: cam.borrow().z_far,
+
         egui_renderer,
         egui_primitives: None,
         egui_full_output: None,
@@ -189,17 +189,15 @@ async fn setup_app(
             frame_ctx.update(gpu.device.as_ref(), gpu.queue.as_ref(), &window_for_loop, &gpu.surface, &mut render_state);
             
             // Draw frame
-            let core_borrow = frame_ctx.scene.borrow();
             let dv = frame_ctx.depth_view_cell.borrow();
             render_state.draw_frame(
                 gpu.device.as_ref(),
                 gpu.queue.as_ref(),
                 &gpu.surface,
-                &core_borrow.active,
+                &frame_ctx.scene,
                 &dv,
                 &cam_bg,
                 &outline_bg,
-                crate::model::CHUNK_SIZE as f32,
             );
         }
     });

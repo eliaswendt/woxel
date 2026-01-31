@@ -3,9 +3,14 @@
 //! This module handles the conversion of chunk block data into renderable meshes,
 //! using greedy meshing to merge adjacent faces of the same block type.
 
-use crate::utils::{BlockCoord, Mesh, Vertex};
+use crate::utils::{generate_outline_mesh, BlockCoord, Mesh, Vertex};
 use super::block::{Block, face_dir_to_normal};
 use super::chunk::CHUNK_SIZE;
+
+pub struct ChunkMesh {
+    pub opaque: Mesh,
+    pub transparent: Mesh,
+}
 
 /// Size of a border slice (one face of the chunk)
 pub const BORDER_SIZE: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
@@ -102,7 +107,7 @@ fn should_render_face(block: Block, neighbor: Block) -> bool {
     false
 }
 
-pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> (Mesh, Mesh) {
+pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> ChunkMesh {
 
     // GREEDY
     // let opaque_mesh = compute_mesh_greedy(blocks, lod, borders, |b| !b.is_transparent());
@@ -110,11 +115,14 @@ pub fn compute_mesh(blocks: &[Block], lod: u8, borders: &ChunkBorders) -> (Mesh,
     // compute_mesh_greedy(blocks, lod, borders)
 
     // NAIVE
-    let opaque_mesh = compute_mesh_naive(blocks, lod, borders, |b| !b.is_transparent());
-    let transparent_mesh = compute_mesh_naive(blocks, lod, borders, |b| b.is_transparent());
+    let opaque = compute_mesh_naive(blocks, lod, borders, |b| !b.is_transparent());
+    let transparent = compute_mesh_naive(blocks, lod, borders, |b| b.is_transparent());
 
 
-    (opaque_mesh, transparent_mesh)
+    ChunkMesh {
+        opaque,
+        transparent,
+    }
 }
 
 
