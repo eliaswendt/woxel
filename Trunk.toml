@@ -2,7 +2,7 @@
 [build]
 dist = "docs"
 # Set public URL if you plan to host under a subpath
-# public_url = "/"
+public_url = "/woxel"
 
 [serve]
 # Change the default port if needed
